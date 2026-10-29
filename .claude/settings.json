@@ -1,4 +1,10 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(docker info:*)",
+      "Bash(bash scripts/paxel/upload.sh:*)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
