@@ -1,0 +1,3451 @@
+# APPWITHAI — Application Context Specification (Interactive Edition)
+
+> Machine-readable spec of the APPWITHAI application generator: the modelling
+> language it reads, the pipeline that compiles it, the templates it renders,
+> and the shape of the application that comes out. Written for language models.
+>
+> Companion human guide: https://www.appwithai.org/guide/index.html
+> (nine chapters, every screenshot from the CRM described in §9. The material
+> is inlined here in §9 so you do not need to fetch it.)
+>
+> **This is the interactive edition.** §0–§9 and §11 carry the same content as
+> `website/llmtext/llms-full.txt`, with cross-references repointed at this edition's §10
+> and four rules added to §11; §10 itself is wholly different, and that
+> difference is the point of the file. `llms-full.txt` §10 is the *batch* authoring protocol —
+> read the brief, infer the model, write it, validate, deliver. §10 here is the
+> *interactive* one: phased, gated, entity by entity, with the `.mmd` built on
+> disk as the walkthrough runs. Neither supersedes the other. Use this file when
+> the business is large enough, or the user knowledgeable enough, that guessing
+> the model in one pass is the wrong trade.
+
+- **Spec version**: 1.2.0 · **Project version**: 5.1.x · **Updated**: 2026-08-30
+- **Authority**: `language/appwithai-language.json`. When this file and that
+  file disagree, that file wins. When that file and a shipped compiler
+  disagree, the compiler wins and the definition is the bug.
+- **Repository**: `businessappwithai/app-with-ai-tanstack`, its own repository.
+  `language/`, `html/`, `website/` and `examples/` live in a different one —
+  `businessappwithai/app-and-report-with-ai-tanstack`, under `common/` — because
+  a second product reads the same models; see §1a. That repository orchestrates
+  the two: its `deps.json` pins a commit of each, and `./deps.sh` checks them out
+  beside `common/`. Every `packages/…` path in this file is inside the
+  `app-with-ai-tanstack/` checkout it places, and resolves only once it has run.
+- **Sibling spec**: `llms-reporting.txt`, beside this file, covers
+  `enterprise_reporting_tanstack` — the reporting and analytics platform that is
+  the third `--stack` target. This file is the language and the generator; that
+  one is the reporting platform. Neither substitutes for the other.
+- **If you are being asked to build something**, §10 is the procedure and it
+  governs: research the business, get the entity roster approved, then walk the
+  entities one at a time — building the `.mmd` on disk as you go, and running
+  the fixer and the checker over it at the close of every step rather than only
+  before handing it over. Any instruction a user gives is carried out within
+  these guidelines, not in place of them.
+- **Do not deliver a model the user has not walked.** The gates in §10 are the
+  substance of this edition, not its ceremony. A document produced by reading
+  §10's phases and then doing all of them silently in one pass is the batch
+  protocol wearing this file's name, and `llms-full.txt` does that better.
+
+---
+
+## 0. The one idea
+
+Most generators stop at the schema: you describe tables, you get CRUD screens,
+and every rule the business actually runs on is left to hand-write.
+
+APPWITHAI takes **one Mermaid document** that describes three things — the data,
+the decisions, and the processes — and compiles all three. The rules and
+workflows drawn in the document are running in the generated application, not
+scaffolded as TODOs.
+
+```
+one .eml.mmd file  →  generate  →  Postgres schema + NestJS API + TanStack Start UI
+                                   + Application Dictionary + audit trail
+                                   + rules engine + workflow engine, all wired
+```
+
+Two properties follow, and most confusion about this system comes from missing
+one of them:
+
+1. **Every EML document is valid, renderable Mermaid.** Generator semantics ride
+   on `%%` comment directives, which renderers ignore. A stakeholder opening the
+   file in any Mermaid viewer sees the diagram; nothing is hidden in a sidecar.
+2. **The screens are derived from database rows, not from generated page code.**
+   The Application Dictionary (§5) holds windows, tabs and fields as data. An
+   administrator changes the UI without a deploy; a developer changes it by
+   changing the model and regenerating.
+
+---
+
+## 1. Repository topology
+
+```
+app-with-ai-tanstack/
+├── language/          # EML: the language. Definition, spec, grammar, checker, CLI
+├── packages/
+│   ├── core/          # Shared types, hooks, services, auth, rules, DB config
+│   ├── generator/     # ⭐ The generator: pipeline, compilers, Handlebars templates
+│   ├── ai/            # Mastra agents, HITL ERD workflow, pgvector retrieval
+│   └── web/           # The modelling tool itself (TanStack Start, :3000)
+├── database/          # Migrations for the modelling tool's own database
+├── website/           # What the site publishes from this repository
+│   ├── llmtext/       #   This file, and its companion
+│   └── viewers/       #   The model viewers — https://www.appwithai.org/viewers
+├── html/              # The human guide published at https://www.appwithai.org/guide, plus
+│                   #   checker.js and fixer.js — the published validators — and
+│                   #   the pages that run a whole stack in a browser tab
+├── scripts/           # Build and CI scripts, incl. the four --check bundlers (§8)
+├── tests/             # Playwright: the modelling tool, and the browser stack
+├── docs/              # Architecture notes and QA reports
+├── generated-projects/# Output of the generator
+└── examples/          # Sample models (.mmd / .eml.mmd)
+```
+
+Two applications live here and must not be confused:
+
+| | The **modelling tool** | The **generated application** |
+|---|---|---|
+| Where | `packages/web`, port 3000 | `generated-projects/<name>`, ports 4000/4001 |
+| What | Where you author and generate a model | What the generator produced |
+| Stack | TanStack Start + Vite 8 | TanStack Start (4000) + NestJS (4001) |
+| Database | `database/migrations/` | its own, per generated app |
+
+When a request says "the app", resolve which one from context. "Generate",
+"designer", "wizard", "project" → the modelling tool. "bus_ table",
+"dictionary", "seeded rule" → the generated application.
+
+### 1a. The orchestrator repository
+
+The tree above is its own repository. `businessappwithai/app-and-report-with-ai-tanstack`
+holds the one language both products read, and orchestrates the two — it checks
+them out at pinned commits rather than containing them:
+
+```
+app-and-report-with-ai-tanstack/
+├── language/                      # ⭐ EML, canonical: definition, spec, grammar,
+│                                  #    checker, fixer, composer, examples, the `eml` CLI
+├── html/                          # The published guide, checker.js / fixer.js,
+│                                  #    the run-in-a-browser pages, html/models/
+├── website/
+│   ├── llmtext/                   #   this file · llmdetailed.txt · llms-reporting.txt
+│   └── viewers/                   #   the model viewers
+├── examples/                      # Sample models
+├── app-with-ai-tanstack/          # The generator and the modelling tool (§1)
+│                                  #   — a separate repository, placed by ./deps.sh
+└── enterprise_reporting_tanstack/ # The reporting and analytics platform
+                                   #   — likewise
+```
+
+The language folder lives outside both products because both read it, and a
+language with two copies has two meanings within a week. Each product keeps its
+own copy for its own CI — `app-with-ai-tanstack/language/` under the same name,
+and `enterprise_reporting_tanstack/language/` as an older fork called
+`erdwithai-language.json`. **All three have drifted from each other, and when
+any of them disagrees with the `common/` copy, the `common/` copy is the
+language.** (An earlier version of this file claimed the first two were
+byte-identical. They are not, and nothing checks them against each other; only
+the duplicated *example models* are held byte-identical, by CI.)
+
+Two consequences worth stating before anyone follows a path:
+
+- `common/language/cli` reaches into the `app-with-ai-tanstack` checkout for the
+  two shipped modules
+  it must not fork — the JDM converter and the generator orchestrator. That is
+  deliberate: a vendored second copy of either is exactly how the CLI and the
+  modelling tool would come to disagree about what a rule flow compiles to.
+- `html/models/*.eml.mmd` and `language/examples/*.eml.mmd` are the same files
+  checked in twice, and CI asserts they stay byte-identical. Edit both.
+
+| | **APPWITHAI** (`app-with-ai-tanstack`) | **Enterprise Reporting** (`enterprise_reporting_tanstack`) |
+|---|---|---|
+| What a model is | the whole application to generate | entities to report on |
+| Produces | Postgres schema, NestJS API, TanStack Start UI, dictionary, rules engine, workflow engine, manual | server functions, list/detail routes, a Kysely migration — to drop into that repo |
+| `--stack` | `tanstack-nestjs` (also `node-rest`) | `enterprise-reporting` |
+| Standalone? | yes | no, by design (§4.1.2) |
+| Its own spec | this file | `llms-reporting.txt` |
+
+---
+
+## 2. System architecture
+
+```mermaid
+graph TD
+    subgraph Authoring ["Authoring — modelling tool :3000"]
+        NL[Natural language description] -->|Mastra agents| MODEL
+        DESIGNER[ERD designer / logic editor / automation builder] --> MODEL
+        MODEL[["EML document (.eml.mmd)<br/>ERD + rules + workflows"]]
+        MODEL --> CHECK[checker.ts → .mmd.error]
+        CHECK --> FIX[fixer.ts auto-fixes]
+        FIX --> MODEL
+    end
+
+    MODEL ==>|the single artifact| PIPE
+
+    subgraph Generation ["Generation — packages/generator"]
+        PIPE[["pipeline/generate-application.ts<br/>THE one path"]]
+        PIPE --> P1[mermaid.parser<br/>ERD, %%index, %%enum]
+        PIPE --> P2[category.parser<br/>%%category]
+        PIPE --> P3[rules/<br/>flowchart→JDM, %%action]
+        PIPE --> P4[hooks/<br/>%%hook]
+        PIPE --> P5[workflows/<br/>state, saga, %%step, %%loop]
+        P1 & P2 & P3 & P4 & P5 --> HBS[Handlebars templates<br/>270 .hbs files]
+    end
+
+    HBS ==> OUT
+
+    subgraph Generated ["Generated application"]
+        OUT[["~400 files"]]
+        OUT --> BE[NestJS + Fastify + Kysely :4001]
+        OUT --> FE[TanStack Start + React 19 :4000]
+        OUT --> TESTS[node:test E2E suite]
+        BE --> DB[(PostgreSQL<br/>bus_* + sys_*)]
+        FE -->|REST /api| BE
+    end
+```
+
+### Data flow at runtime, in the generated app
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant FE as TanStack Start (4000)
+    participant API as NestJS BusController (4001)
+    participant HOOK as Hook registry
+    participant RULE as zen-engine (JDM)
+    participant WF as Workflow engine
+    participant DB as PostgreSQL
+
+    User->>FE: Edits a record, saves
+    FE->>API: PUT /api/bus/:entity/:id
+    API->>HOOK: beforeUpdate handlers
+    HOOK->>RULE: evaluate rules bound to (entity, beforeUpdate)
+    alt a validation-error action matches
+        RULE-->>API: action=validation-error + message
+        API-->>FE: 400, the write never happens
+    end
+    RULE-->>API: action=trigger-workflow + workflowName
+    API->>DB: UPDATE bus_<entity>
+    API->>WF: start workflow by name
+    WF->>DB: run each %%step in edge order
+    API->>DB: INSERT sys_audit_log
+    API-->>FE: 200 + updated record
+    FE->>FE: refresh from the dictionary-driven view
+```
+
+The chain in words: **a value change fires a rule, the rule's action names a
+workflow, the workflow's steps write rows.** Everything in it was declared in
+the model. §9.7 walks a concrete instance of this chain.
+
+---
+
+## 3. EML — the input language
+
+Full reference: `language/spec/` (6 documents), grammar in
+`language/grammar/appwithai.ebnf`, canonical definition in
+`language/appwithai-language.json`.
+
+### 3.1 Document structure
+
+A document is UTF-8 text holding one or more **sections**. A section opens at a
+Mermaid keyword and runs to the next one.
+
+| Opening keyword | Section |
+|---|---|
+| `erDiagram` | ERD |
+| `flowchart` / `graph` | business rules **or** workflow |
+| `stateDiagram-v2` | workflow (state-machine form) |
+
+A `flowchart` is read as **rules** when preceded by `%%meta kind: rules`, or
+when it contains only decision/expression/function/io shapes and no `%%hook`
+directives. Otherwise it is a **workflow**.
+
+### 3.2 The sixteen directives, with status
+
+`status` is the field that matters. **compiled** = a shipped reader consumes it
+and the generated application changes. **validated** = only `checker.ts` reads
+it. **reserved** = documented, renderer-safe, inert.
+
+| Directive | Form | Status | Compiled by |
+|---|---|---|---|
+| `%%meta` | `%%meta <key>: <value>` (keys: `name`, `kind`, `version`, `entity`, `stack`, `description`) | compiled | `language/composer.ts` |
+| `%%hook` | `%%hook <type> <handler> on <E>` · `%%hook <type> on <E>` | compiled | `generator/src/hooks/index.ts` |
+| `%%step` | `%%step <nodeId> <stepType> <k>: <v> …` | compiled | `generator/src/workflows/steps.ts` |
+| `%%action` | `%%action <name> <type> when: <expr> …` | compiled | `generator/src/rules/index.ts` |
+| `%%field` | `%%field <E>.<attr> <k>: <v>` | compiled *(`enum:` and `help:`)* | `generator/src/parsers/mermaid.parser.ts` |
+| `%%enum` | `%%enum <Name>: a, b, c` | compiled | `mermaid.parser.ts` |
+| `%%category` | `%%category name: X; icon: Y; entities: A, B` | compiled | `generator/src/parsers/category.parser.ts` |
+
+The `name:` key on `%%category` is **required** — a directive without one is skipped entirely and declares no group at all (`EML154`).
+
+**An `icon:` names a lucide icon, and a wrong name is silent.** `%%category
+icon:` reaches `sys_category.icon` and is drawn beside the category's heading on
+the dashboard; `%%entity icon:` reaches `sys_table.icon` and is drawn on the
+entity's own card. Three spellings all resolve — `LayoutGrid`, `layout_grid`
+and `layout-grid` are the same icon — so write whichever reads best and the
+application normalises it. What does *not* resolve is a name lucide does not
+have: it is not a diagnostic, because the checker does not carry lucide's
+catalogue, and the application draws a placeholder in its place. `icon: flask`
+is the trap — lucide has no `flask`, it has `flask-conical` — and it sat
+uncaught in this project's own hospital example for months, drawing a
+placeholder where the Diagnostics heading's icon should have been. Check a name
+at https://lucide.dev/icons before writing it.
+
+`%%entity icon:` is compiled too, and follows the same rules. It reaches
+`sys_table.icon`, which is what the entity's dashboard card, its window heading
+and the navigation all draw — so a model can give every entity its own icon,
+and an entity the model says nothing about gets a default rather than nothing.
+The same column is what Application Dictionary → Table and Column writes, where
+an administrator can override the model's choice or upload an image instead, so
+the two never disagree about where an icon lives.
+
+In the browser (`--standalone`) stack the value is carried into `model.json` and
+served by `/model`, but that interface draws a text glyph and does not render
+it — the icon is for the NestJS stack's screens.
+| `%%index` | `%%index <E>(<a>[, <b>]) [unique]` | compiled | `mermaid.parser.ts` → real DDL |
+| `%%guard` | `%%guard <field> <operator> <jsonValue>` | compiled | `web/src/lib/automation/model.ts` |
+| `%%loop` | `%%loop <id> while: <f> <op> <v> max: <n>` | compiled | `workflows/steps.ts` |
+| `%%workflow` | `%%workflow <Name> entity: <E> kind: <hook\|state\|saga>` | compiled | `generator/src/workflows/index.ts` |
+| `%%rbac` | `%%rbac <roleExpr> on <E>.<op>` | compiled | `generator/src/rbac/index.ts` |
+| `%%entity` | `%%entity <E> <k>: <v>` | compiled *(`help:`/`description:`, `icon:`, `parent:`)*, validated otherwise | `mermaid.parser.ts` · `language/checker.ts` |
+| `%%rule` | `%%rule <name> on <E> event: <hook> priority: <n>` | validated | `language/checker.ts` |
+| `%%trigger` | `%%trigger <source> -> <handler> on <E>` | validated | `language/checker.ts` |
+| `%%report` | `%%report <name> title: <T> [entity: <E>] [chart: bar\|line\|pie\|area x: <col> y: <col>] [help: <why it is asked>] sql: <query>` | compiled | `generator/src/reports/index.ts` · `common/build/reporting-pack.ts` |
+
+`%%report` is the one directive whose payload is SQL. It declares a question the
+application's *users* ask, as the query that answers it, and the query runs
+against the generated application's own database, so it names `bus_` tables.
+See §10.5.1 for when to write one and what the reporting layer already derives
+without being asked.
+
+The checker holds it to its shape — a query that exists (`EML290`), a name
+(`EML291`), no duplicate name (`EML292`), `SELECT` or `WITH` rather than a write
+(`EML293`), both axes when a chart is asked for (`EML294`), an `entity:` the
+model declares (`EML295`), a known chart type (`EML296`).
+
+**It is then compiled twice, by two readers, and neither replaces the other.**
+
+- **By the generator**, `generator/src/reports/index.ts` compiles each one into
+  the generated application itself. In the NestJS stack that is a row in
+  `sys_report`, served by `GET /sys/reports` and `…/:name/run`, and shown under
+  **Admin → Analysis**. In the browser application it is an entry in
+  `model.json`, served by `/api/reports`, and shown under **Reports**. Both run
+  the query on demand against the application's own database, so the answers
+  change as the application is used.
+- **By this repository**, whose `common/build/reporting-pack.ts` turns each one
+  into a saved query, a report definition and, where `chart:` is set, a chart —
+  seeded into the separate Enterprise Reporting platform, ahead of the baseline
+  derived from structure alone. That platform is composed beside a *deployed*
+  application by docker-compose; it is not in the browser application and not in
+  the zip.
+
+A report is read-only in both: the compiler refuses anything that is not a
+single `SELECT` or `WITH`, and each runtime refuses again before it executes —
+`sys_report` is an ordinary table and `model.json` an ordinary file, so neither
+reader trusts what it is handed.
+
+`sql:` is always last on the line and takes the rest of it, because a query
+contains spaces and colons and would otherwise be shredded by the key scan.
+
+**Do not tell a user a directive "will do X" without checking its status.** A
+`%%entity Order audited: true` is validated but not compiled: it will not make
+the table audited today.
+
+The two rows with a key-level split are the ones to read carefully, because the
+mistake they invite is the expensive direction — concluding that `help:` is
+inert and skipping it. It is not: `%%field <E>.<col> help:` and `%%entity <Name>
+help:` are compiled to `sys_column.description` and `sys_table.description`,
+shown in the running application, and are the entire "what it is for" column of
+the generated manual (§5.6). A model that omits them produces an application
+whose manual is a table of dashes. Every *other* key on either directive is
+validated only.
+
+**Help is not optional. Write `%%entity <Name> help:` for every entity and
+`%%field <Entity>.<column> help:` for every column, without exception.**
+
+This is the single most-skipped part of a model and the most expensive to skip.
+The generated application has no other source of explanation: no tooltips
+written by hand, no README beside the form, no designer to ask. What you write
+here is what a user reads under the control, what the Application Dictionary
+shows beside the column, and the whole of the manual the generator ships. Leave
+it out and the application still runs — which is exactly why it gets left out —
+but every field on every form is a label with nothing behind it.
+
+- **Every entity**, including the ones that feel self-evident. "Invoice" is not
+  a description of an invoice.
+- **Every column**, including `status`, the foreign keys and the enums. A
+  reference column should say what the reference is *for* ("the ward this bed
+  stands in"), not restate its type.
+- **Say what it is for, not what it is.** `%%field Lead.score help: 0-100, set
+  by the scoring rule. Anything over 70 routes to a salesperson.` tells a reader
+  something. `The score of the lead.` does not.
+- **Nobody adds it later.** The model is the only place it can be written, and
+  the moment it is being written is the only moment anyone knows the answer.
+
+**Quality bar:** each entity help must be at least two sentences describing its
+business role, lifecycle, and what distinguishes it from similar-sounding
+entities. Each field help must explain why the value matters, any constraints,
+and business consequences. Examples:
+
+  Bad:  `%%entity Customer help: The customer.`
+  Good: `%%entity Customer help: A person or organisation that buys from us. Created when a lead converts; cannot be deleted while open orders exist.`
+
+  Bad:  `%%field Customer.name help: The name of the customer.`
+  Good: `%%field Customer.name help: Full legal name as it appears on invoicing documents — required for tax reporting.`
+
+The checklist in §10 asks for both, and **the checker now reports the three ways
+a model falls short**: `EML152` for an entity with no help, `EML153` for columns
+with none, and `EML151` for help that merely restates its own name. All three are
+warnings, so they do not fail a run — and all three have to be cleared before a
+model is delivered.
+
+**`%%meta description:` is mandatory and substantive.** Every model must include
+a `%%meta description:` line that is a multi-sentence summary of what the
+application does: its business domain, the entities it manages, the workflows it
+automates, and the value it provides to its users. This text flows into the
+generated manual's "Application Overview" section, the `APP_DESCRIPTION` row in
+`sys_system` (editable from Admin > System Configuration as a textarea), and the
+admin dashboard header. Example:
+
+  `%%meta description: This application manages the complete drug-discovery pipeline from target identification through clinical trials. It tracks compounds, assays, and their results; automates the stage-gate workflow that moves candidates through discovery, preclinical, and clinical phases; enforces regulatory constraints through business rules; and provides real-time dashboards for portfolio managers to monitor pipeline health and make go/no-go decisions.`
+
+### 3.2.1 `%%rbac` — access control
+
+```
+%%rbac role:admin on Order.delete            # a CRUD operation
+%%rbac role:sales|manager on Deal.update     # `|` is OR
+%%rbac role:admin on Customer.*              # all four operations
+%%rbac role:sales_manager on Quote.approve   # a transition of Quote's machine
+```
+
+**It restricts; it does not grant.** A target no directive names is open to any
+authenticated caller — so a model declaring no `%%rbac` generates exactly the
+application it did before. One or more directives close the target to the union
+of the roles they name. A master role bypasses. Role names match
+**case-insensitively**, because seeded roles are title-cased (`Manager`) and
+directives are written lower-case (`role:manager`); an exact match would make
+such a rule unsatisfiable, locking out the people it was written to admit.
+
+The master bypass is over **access** — who may do a thing. It is not a bypass
+over the shape of the model: a state machine's topology is enforced for the
+master role too (§3.5). An edge the diagram never drew is a move that does not
+exist, not a permission an administrator is missing.
+
+`<op>` is a CRUD operation (`create` `read` `update` `delete` `*`, plus aliases)
+**or** a transition event from the entity's `stateDiagram-v2`.
+
+| | |
+|---|---|
+| CRUD rules → | `sys_operation_access` (table, operation, role) |
+| Transition rules → | `sys_transition_access` (table, transition, status field, from, to, role) |
+| Enforced by | `EntityAccessGuard` on every route carrying an entity in its path — `/bus/:entity` and `/workflows/entity/:entityName` |
+| Roles → | one `sys_role` per role named, and one seeded account holding each |
+| `read` rules also → | narrow the dictionary window scope and the entity navigation |
+
+**`read` decides which functional role an entity belongs to.** Every other
+operation only refuses a write; `read` is the one that changes what a role
+*sees*. An entity a role may not read is absent from that role's navigation
+entirely — no menu entry, no dashboard card, no lookup — so one `read` directive
+per entity is how a model says whose application that entity is part of:
+
+```
+%%rbac role:sales_rep|sales_manager|support_agent on Account.read
+%%rbac role:support_agent|support_manager on SupportCase.read
+%%rbac role:marketing_manager on Campaign.read
+```
+
+Name every entity on at least one such directive. A model that declares none
+leaves every entity visible to every signed-in caller — the behaviour of every
+model written before this rule, and the fallback rather than the target. A role
+that may *act* on an entity must be named on its `read` line too, or it cannot
+open the record its transition applies to. Do not use `.*` for this: it also
+restricts create/update/delete to the same list, and it merges with rather than
+overrides the narrower rules elsewhere in the document.
+
+**Every role named gets one seeded account.** `packages/generator/src/rbac/roles.ts`
+derives the roles, one account per role, and the per-entity visibility map; both
+stacks read it, so neither can disagree about who sees what. The administrator
+bypasses every rule, which is exactly why an application seeded with only an
+administrator cannot demonstrate its own access control — and why both sign-in
+screens list every account with the number of entities its role can see.
+
+**Deployed beside the reporting platform, the same directive shapes a second set
+of roles — and they are a mirror, not a shared system.** `./start.sh` in this
+repository brings the generated application up at `/app` and Enterprise
+Reporting at `/report`, with the application's database already attached as a
+data source. `common/build/reporting-pack.ts` derives one *reporting* role per
+declared role, permitted to read exactly the `bus_` tables that role's `read`
+rules admit.
+
+Nothing is shared between them. Separate databases, separate user tables,
+separate sessions, separate sign-in screens — and a role name that means
+different things on each side: in the application it decides what a user may
+**do** to a record, in the reporting platform which tables their queries may
+**read**. The accounts differ on purpose, `sales.manager@<app>.example.com`
+against `sales.manager@<app>.reports.example.com`, so that neither is mistaken
+for the other, and the origin's front door at `/` lists both pairs side by side.
+
+Only `read` rules narrow a reporting role. A restriction on create, update or
+delete means nothing to somebody who cannot write through that product at all.
+
+Two design facts that answer most questions about it:
+
+1. **A rule about anything but `read` does not write `sys_access`.** That is a
+   *grant* table feeding `sys_refresh_dictionary_scope()`, where a table with no
+   rows is visible to all roles and the first row added narrows it to that role
+   alone. Seeding one from `%%rbac role:admin on Order.delete` would hide the
+   Order *window* from everyone but admin — a restriction on deleting quietly
+   becoming a restriction on looking. `read` is the one operation where hiding
+   the window is the right answer, and it is the only one that does.
+2. **A transition has no endpoint of its own.** Moving a record along an edge is
+   an ordinary status update, so a rule stores the `(from_state, to_state)` pair
+   and the guard matches on the states the write crosses. Both ends are kept:
+   one event can sit on several edges, and two events can reach the same state,
+   so matching the destination alone would restrict writes the model never
+   mentioned.
+
+Rules carry `entity_type = 'D'` and are replaced on regeneration; rules an
+administrator adds in the running app are `'U'` and survive.
+
+**`%%rbac` governs entity data only.** Two administrative surfaces are gated
+separately, because a model has no way to name them:
+
+| Surface | Rule | Guard |
+|---|---|---|
+| `/sys` — the Application Dictionary | reads open to any signed-in user, writes admin-only | `DictionaryWriteGuard` |
+| `/audit` — the audit trail | admin-only | `RolesGuard` + `@Roles` |
+
+Dictionary **reads stay open** because `use-entities.ts` needs them to render
+any list or form; gating them leaves a non-admin looking at empty pages. Writes
+are administrative — every screen is drawn from those rows, so one edit changes
+what everyone sees. The guard keys on HTTP method rather than per-route
+decorators, so a route added later defaults to closed.
+
+Validation is strict here — `EML210` syntax, `EML211` no role, `EML213`
+undeclared entity, `EML214` target is neither an operation nor a transition —
+and all but one are **errors**, because a `%%rbac` rule that does not compile is
+not a rule that does nothing: it is an access restriction its author believes is
+in place and is not.
+
+### 3.3 ERD section
+
+```mermaid
+%%enum LeadStatus: new, working, qualified, converted
+erDiagram
+    Campaign {
+        string id PK
+        string name
+    }
+    Lead {
+        string id PK
+        string email UK
+        string status
+        string campaign_id FK
+        decimal score
+        date    created_at
+    }
+    Campaign ||--o{ Lead : "generates"
+%%field Lead.status enum: LeadStatus
+%%index Lead(campaign_id, status)
+
+%%entity Campaign help: A marketing activity run to produce leads — an event, a mailing, a paid placement. The campaign is what a lead's cost of acquisition is attributed to, so it exists before the leads it generates.
+%%field Campaign.name help: What the campaign is called in the marketing plan and on every report of what it produced. Name it so somebody reading the results next year still knows what was run.
+
+%%entity Lead help: A prospective customer captured from a campaign or direct outreach. A lead becomes an opportunity once a salesperson qualifies it, and until then nothing is sold against it.
+%%field Lead.email help: The address the enquiry arrived from and where the first outreach goes. Unique, so two enquiries from one person do not become two leads to work in parallel.
+%%field Lead.status help: new — not yet picked up; working — being pursued; qualified — accepted by sales; converted — an account now exists. Only the moves the lifecycle draws are allowed.
+%%field Lead.campaign_id help: The activity that produced this lead. It is what a campaign's cost per lead is computed from, so an unattributed lead makes the whole campaign look worse than it was.
+%%field Lead.score help: 0-100, from the scoring rule. Anything over 70 routes straight to a salesperson rather than into a nurture sequence.
+%%field Lead.created_at help: When the enquiry arrived. Time-to-first-contact is measured from here, and it is the single number most predictive of whether a lead converts.
+```
+
+- **Modifiers**: `PK` `FK` `UK` `UNIQUE` `OPTIONAL` `NULL`. Anything else is
+  **dropped silently** by the parser — `EML118` now warns, because
+  `string email UNQIUE` otherwise yields a column that is simply not unique and
+  renders identically in the diagram.
+- **Types** normalise through `types.map` in the definition JSON; unknown types
+  fall back to `string` with `EML115`.
+- **Foreign keys** resolve by name: a column ending `_id` points at the entity
+  whose snake_case name it carries. `_by` columns resolve to the model's person
+  entity (User if it exists, otherwise Staff, then Employee).
+- **Cardinalities**: all 8 Mermaid ER operators are compiled.
+- `id PK` is auto-added when an entity declares none.
+
+### 3.3.1 Parent and child — line items
+
+Some entities have no life away from their owner: an invoice line, an order
+line, a prescription item. **The ERD cannot express this**, and that is the
+whole reason the directive exists — `InvoiceLine.invoice_id` and
+`Invoice.patient_id` are both a foreign key with a relationship behind it, and
+nothing in Mermaid says that a line means nothing without its invoice while a
+patient means a great deal without one.
+
+```
+%%entity InvoiceLine parent: Invoice
+```
+
+**Decide it with these questions, in this order:**
+
+1. Would a list of these records, *away from their owner*, be useful to anyone?
+   A screen of every invoice line ever written is not a screen anyone opens.
+   If no — it is a child.
+2. Does the row's identity depend on the owner? "Line 1 of invoice 7", not
+   "line 1". If yes — it is a child.
+3. Would deleting the owner make the row meaningless? If yes — it is a child.
+
+A **reference** is the opposite on all three: `Invoice.patient_id` points at a
+Patient who exists, and matters, on their own. Most foreign keys are references.
+Line items are the minority, and they are usually obvious once the questions are
+asked: the noun is a *line*, an *item*, a *detail*, an *entry*.
+
+**What it does to the application:**
+
+| | Parent | Child |
+|---|---|---|
+| `sys_window` | its own | **none** |
+| Dashboard | a card | **no card — not navigable** |
+| `sys_tab` | `tab_level: 0` | `tab_level: 1`, in the *parent's* window |
+| Reached by | opening the window | opening a parent record |
+
+The tab links on the child's own foreign key back to the parent — the one
+already in the ERD, marked `sys_column.is_parent` and stored as
+`sys_tab.link_column_id`. **Do not declare a second column for it**, and do not
+drop the relationship line: the directive names the parent, the ERD still draws
+the edge.
+
+Four codes police it:
+
+| Code | Severity | Fires when |
+|---|---|---|
+| `EML147` | error | the parent is not declared, or an entity names itself |
+| `EML148` | error | the child has no foreign key back — nothing for the tab to link on |
+| `EML149` | info | an entity is *shaped* like a line item and declares no `parent:` |
+| `EML150` | warning | a declared child is still named in a `%%category` |
+
+`EML147` and `EML148` are errors because a line item with nothing to link on
+loses its own window and gains no tab, which is an entity that has quietly left
+the application.
+
+`EML149` is an **info and never an error**, because the three questions above are
+about the business and not about the document: only you know whether a list of
+these records away from their owner is a screen anyone opens. The checker can
+only say that the shape is there, and it names both the candidate parent and the
+column a tab would link on. It fires on two shapes, each of which also requires
+that foreign key: an entity whose name **begins** with a declared entity's name
+(`InvoiceLine`/`Invoice`, `TeamMember`/`Team`,
+`FinancialPlanAssumption`/`FinancialPlan`), and an entity whose name **ends** in a
+line-item noun — `Line`, `LineItem`, `Item`, `Detail`, `Entry`, `Row` — whose
+foreign key resolves to a declared entity (`RecommendationItem` under
+`InvestmentRecommendation`).
+
+**Answer every `EML149` before you deliver.** Either declare the parent, or
+satisfy yourself that the entity is a thing in its own right and leave it — an
+`EML149` you have walked and rejected is not a fault, and the run still reports
+`OK`. What is not acceptable is not having looked: if nobody decides, the default
+is a dashboard card listing every line ever written and a parent record that does
+not show its own lines.
+
+`EML150` is a warning rather than an error because nothing breaks — but the two
+directives contradict each other. `parent:` takes the child's dashboard card
+away and the category asks for one, so the group counts an entity the reader can
+never open from it. Take the child out of the `entities:` list.
+
+**What the running application does with it.** Both stacks read the same three
+rows and nothing else. Opening a parent record shows one tab per line item below
+the form, each listing only the rows whose `is_parent` column holds that
+record's key, with a live count on the tab and a row click that opens the child.
+The dashboard and the navigation are built from the entities that have a window,
+so the child appears in neither. None of that is decided by a screen — it is
+`sys_tab.tab_level`, `sys_tab.link_column_id` and `sys_column.is_parent`, which
+is why the model's answer and the application's arrangement cannot drift apart.
+
+A child is still a real table with real rules, access control and a form. It is
+only its *placement* that changes. Leave it out of `%%category` — a category
+lists what appears on the dashboard, and a child does not.
+
+### 3.4 Rules section
+
+Two forms, and the difference is the single most common source of "my rule
+decides but nothing happens":
+
+**Node-graph form** — shape carries the decision role, compiles to a JDM graph.
+Good for pricing/scoring. Carries **no outputs**, so the engine finds no actions.
+
+```mermaid
+%%meta kind: rules
+%%rule leadScoring on Lead event: beforeCreate priority: 10
+flowchart TD
+    A([Start]) --> B{score > 80?}
+    B -->|Yes| C[hot]
+    B -->|No| D[warm]
+    C --> E([End])
+    D --> E
+```
+
+**Decision-table form** — a section carrying `%%action` directives compiles to a
+JDM decision table, one row per directive. This is the shape the rules engine
+reads `action`, `message`, `ruleId` and `workflowName` from, and therefore
+**the only form whose rules can act**.
+
+```
+%%action escalate trigger-workflow when: severity == "critical" workflow: CriticalEscalation
+%%action requireCause validation-error when: root_cause == null message: A root cause is required
+```
+
+| Action key | Output column | Effect |
+|---|---|---|
+| `workflow` | `workflowName` | `trigger-workflow` starts that workflow |
+| `message` | `message` | `validation-error` fails the write with this text |
+| `field` / `value` | `field` / `value` | stamps a column |
+| `targetEntity` / `linkField` | same | acts on a related row |
+
+`hitPolicy: collect` — several rows may match one write. Every output column is
+written in every row, blank where unused: zen-engine yields **no result at all**
+for a row with a missing cell, so an omitted column silently voids the rule.
+
+### 3.5 Workflow sections — three kinds
+
+**`kind: hook`** — binds named handlers to lifecycle events. Compiles to
+per-entity handler modules plus a registry the bus service calls around every
+CRUD operation. 13 hook types (`beforeCreate`, `afterCreate`, `beforeUpdate`, …).
+
+**`kind: state`** — a `stateDiagram-v2`. States become the values a status column
+may hold; compiles to BPMN seeded into `sys_workflow_definitions`. States should
+be backed by a declared `%%enum` (`EML426`/`EML428` check this). Each declared
+edge is also seeded into `sys_workflow_transitions`; the entity-access guard
+reads that table on every status-field write and returns **403** for any move
+that has no matching edge, leaving the record in the state it was in.
+
+**Topology binds every caller, the master role included** — that is what makes
+it topology rather than access. Whether an edge *exists* is decided by the
+diagram; *who may cross* an existing edge is the separate question `%%rbac`
+answers from `sys_transition_access`, and that one the master role does bypass.
+So an edge no `%%rbac` names is open to any authenticated caller, while an edge
+the diagram omits is refused to everyone. The two are enforced independently:
+checking topology only where a role rule happens to cover it would leave every
+unguarded edge open.
+
+`GET /api/workflows/transitions` returns the stored edges, narrowable by
+`?table=` and `?from=`. A screen offering a status change should ask this and
+offer only the moves that exist, rather than offering every state and letting
+the save be refused. An entity with no state diagram has no rows, and nothing
+is enforced for it.
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft
+    draft --> submitted : submit
+    submitted --> approved : approve
+    approved --> [*]
+```
+
+**`kind: saga`** — a multi-step process. Each `%%step` binds a flowchart node to
+an executable step; the flowchart's **edges give the running order**.
+
+```
+%%workflow LeadConversion entity: Lead kind: saga trigger: rule
+flowchart TD
+    A([Lead qualified]) --> B{Size the account}
+    B --> C[Open the account] --> D[Create the primary contact]
+    D --> F[Mark the lead converted] --> G[Stamp the account tier] --> H([Converted])
+
+    %%step B Decision decisionTable: {"hitPolicy":"first","inputs":[{"id":"i1","name":"Score","field":"score"}],"outputs":[{"id":"o1","name":"Tier","field":"accountTier"}],"rules":[{"_id":"strategic","i1":">= 85","o1":"'strategic'"},{"_id":"rest","i1":"","o1":"'smb'"}]}
+    %%step C CreateEntity entity: Account as: newAccountId fields: {"name":"company_name","tier":"accountTier","owner_id":"owner_id"}
+    %%step D CreateEntity entity: Contact as: newContactId fields: {"account_id":"newAccountId","email":"email"}
+    %%step F UpdateEntity field: status value: converted
+    %%step G UpdateEntity entity: Account targetSource: newAccountId field: tier source: accountTier
+```
+
+(Abridged from `language/examples/crm.eml.mmd`. `Decision` carries its decision
+table inline as `decisionTable:` JSON; `trigger: rule` means the saga starts
+only when a rule's `trigger-workflow` action names it.)
+
+Step types: `UpdateEntity` `CreateEntity` `DeleteEntity` `Formula` `Decision`
+`REST` `Agent`. Steps share a context — the triggering record's columns plus
+every variable an earlier step published (`as` on `CreateEntity`, `target` on
+`Formula`). `source`/`targetSource` is how a later step reaches an earlier
+step's row.
+
+**`fields` carries JSON and must be the last key on a `%%step` line.**
+
+A workflow declared in the model has `source: 'model'`: the generated Workflow
+Designer shows it read-only and regeneration rewrites it. Workflows authored in
+the running app carry `source: 'designer'` and regeneration never touches them.
+
+### 3.6 Validation
+
+```bash
+bun language/checker.ts model.mmd        # writes model.mmd.error beside it
+bun language/fixer.ts   model.mmd.error  # applies auto-fixes, re-checks
+```
+
+Without a checkout, the same two engines are published as ES modules — see §10.6,
+which is also the procedure you are expected to follow before handing a model to
+anyone:
+
+```js
+import { check }        from "https://www.appwithai.org/guide/checker.js";
+import { checkAndFix }  from "https://www.appwithai.org/guide/fixer.js";
+```
+
+**A clean report is not a finished model.** Nothing in the checker requires a
+model to *have* anything: one entity with a primary key and a name is valid EML
+with no lifecycle, no rule, no access control and no help text — 0 errors, and
+`formatReport` closes with *the generator accepts this model*, which is not the
+same as *this model is done*. A second runner scores that, published beside the
+two modules and resolved the same way:
+
+```sh
+curl -sO https://www.appwithai.org/guide/audit-model.mjs
+node audit-model.mjs model.mmd
+#   exit 0  every check passed · exit 1  one or more failed · exit 2  it could not run
+```
+
+Twenty-two checks — last line `22 passed, 0 failed` — over the file contract and
+the delivery checklist: a primary key per entity, the `FK` modifier on every
+`_id`/`_by` column, an enum binding behind every status, a `kind: state` workflow
+with an initial transition and a terminal state, `%%action`, `%%hook`,
+`kind: saga` and `%%rbac` all present, help on every entity and column that is
+not a restatement of its own name, every declared line item out of every
+`%%category`, and the three checker passes over the file's own bytes. `--quiet`
+prints the score alone; `--base <dir-or-url>` is the same flag, so a relative
+directory such as `--base ./` works with no network at all. It is a **scorer, not
+a second checker**: every diagnostic it reads comes from `checker.js`. Run both,
+and report both.
+
+Severities: **error** (generator would produce something wrong — exit 1);
+**warning** (legal but almost certainly unintended — exit 1 only under
+`--strict`); **info**.
+
+Code ranges: `EML0xx` document · `EML1xx` entities and their directives ·
+`EML2xx` directive-declared hooks/rules/workflows · `EML3xx` rule flowcharts ·
+`EML4xx` workflow sections · `EML5xx` cross-section consistency.
+
+Auto-fixable — eight codes: `EML001` (missing `%%meta name`), `EML103` (a column
+the generator adds anyway), `EML112` (duplicate attribute), `EML114` (FK missing
+`_id`), `EML117` (no primary key), `EML287` (a rule condition written in
+camelCase), `EML421` (no initial transition), `EML422` (no terminal state). The authority is `AUTO_FIXABLE_CODES` in
+`language/checker.ts`, mirrored by the fixer's dispatch table and
+`diagnostics.autoFixable` in `language/appwithai-language.json`.
+
+**Warnings here are not noise.** Most describe something the generator accepts
+and quietly gets wrong — a dropped modifier, a state no enum backs, a rule that
+can decide but cannot act.
+
+---
+
+## 4. The generator
+
+### 4.1 One pipeline, three entry points
+
+`packages/generator/src/pipeline/generate-application.ts` is **the** generation
+path. The CLI, the modelling tool's `/api/generate`, and the WASM CLI (§4.1.1)
+all go through it, so a model produces the same application however it was
+submitted.
+
+> Adding a generator input means adding it **here, once**. The two call sites
+> used to assemble options separately and drifted: the web path never parsed
+> `%%category`, so an app generated through the UI lost every category the model
+> declared and fell back to a single "General" group.
+
+```bash
+bun packages/generator/src/cli/generate.ts generate \
+  --input language/examples/crm.eml.mmd \
+  --output generated-projects/crm --name crm \
+  --port 4001 --frontend-port 4000 \
+  --records-per-entity 25 --force --no-setup
+```
+
+Subcommands: `generate` `generate:backend` `generate:frontend` `generate:entity`
+`inspect` `validate` `diff` `info` `wizard` `list` `deploy`.
+
+Key flags: `--force` overwrite · `--dry-run` preview · `--no-setup` skip
+install/migrate/seed · `--no-tests` skip the E2E suite · `--records-per-entity`
+(default 1000) · `--db postgresql|sqlite` · `--run-tests`.
+
+**Ports**: generated apps use 4000 (app) and 4001 (API), deliberately off 3000
+where the modelling tool runs. Source of truth
+`generator/src/generators/ports.ts`; `web/src/lib/generated-ports.ts` mirrors it
+for client components with a unit test asserting they stay equal.
+
+### 4.1.1 The third entry point — the browser stack
+
+`bun run wasm generate` (`generator/src/cli-wasm/generate.ts`) runs **the same
+pipeline**, then applies an overlay. It is not a second stack, and the CI checks
+in §8 exist to keep that true: the overlay changes 9 files and adds 6, and
+exactly one of the nine is application source.
+
+Two modes, and they produce very different things:
+
+| | Default | `--standalone` |
+|---|---|---|
+| Output | ~430 files — the full NestJS + TanStack source, with `pg` swapped for WebAssembly Postgres and `bun` for `node` | ~40 files — a self-contained browser application |
+| The model becomes | the same generated source any other stack gets | `app/model.json` plus `schema.sys.sql` / `schema.bus.sql`; **no per-entity source at all** |
+| Needs | `npm install`, a build | neither — open `index.html` |
+
+The standalone mode is the one that surprises people: there is no
+`bus_lead.controller.ts` to read, because the entities are data the runtime
+interprets, exactly as the Application Dictionary already made screens data
+(§5.3). Its runtime lives in `templates/wasm/` and `templates/wasm-overlay/` as
+plain `.js` copied verbatim — **after editing either, run `bun run
+build:wasm-runtime` from the repo root**, or the generator keeps emitting
+yesterday's runtime while the diff shows today's.
+
+### 4.1.2 The fourth entry point — the reporting target
+
+The `eml` CLI carries a third `--stack` value, and it is the one that does not
+go through the pipeline above at all:
+
+```bash
+bun language/cli/eml.ts generate -i model.eml.mmd -o ./out --stack enterprise-reporting
+```
+
+`language/cli/src/generate/enterprise-reporting.ts` reads the same parsed model
+and writes, per entity, a TanStack Start server-function module, a list route, a
+detail route, one Kysely migration in **PostgreSQL** DDL, and a snippet for the
+`Database` interface. It drives no orchestrator and renders no Handlebars.
+
+**It generates less on purpose, and this is the part to state when asked.** The
+target's output is not an application; it is code shaped to drop into an
+`enterprise_reporting_tanstack` checkout, which already holds auth, two layers of
+RBAC, an encrypted data-source connection manager, an NL→SQL pipeline, a job
+runner and a UI shell. Generating a copy of any of those would be forking a
+moving part.
+
+So the coverage is deliberately partial, and a model author who assumes
+otherwise ships an unguarded application:
+
+| EML level | `tanstack-nestjs` | `enterprise-reporting` |
+|---|---|---|
+| core — entities, fields, enums, indexes | compiled | compiled |
+| rules | compiled, seeded, evaluated | emitted as JDM under `rules/`, **not wired up** |
+| workflows — hooks, state machines, sagas | compiled | **not compiled** |
+| access — `%%rbac` | compiled to `sys_operation_access` / `sys_transition_access`, enforced by the guard | **not compiled** — the handlers call `requireAuth()`; adding `requirePermission()` and the role strings is an integration step |
+| help | dictionary + `manual.html` | field labels only |
+
+Write the model in full regardless. The behaviour this target skips is still
+what `checker.js` validates, what the viewers render, and what the other target
+compiles from the very same file.
+
+Four conventions of the reporting repository are load-bearing, and getting them
+right every time is most of why the target exists:
+
+1. **`.inputValidator()`, never `.validator()`.** The TanStack Start v1 Vite
+   plugin preserves unknown method names verbatim in the client bundle, so
+   `.validator()` type-checks, builds, and then crashes at runtime with no
+   compile-time signal.
+2. **`{ data: input }` on every client call** whose server function declares an
+   input validator.
+3. **`LIMIT`/`OFFSET` at the database.** Server-side pagination is mandatory
+   there — the data sources are other people's production databases.
+4. **PostgreSQL, double-quoted identifiers.** `TIMESTAMPTZ`, `BOOLEAN`, `JSONB`,
+   `NUMERIC`, `gen_random_uuid()`. `TINYINT(1)`, `DATETIME`, backticks and
+   `ON UPDATE CURRENT_TIMESTAMP` are MariaDB spellings; none of them parse, so
+   `updated_at` is set by the update handler rather than by the column. Several
+   files under that repository's `docs/` still describe MariaDB or SQLite. None
+   of it is in the running system.
+
+Full detail, including that platform's own architecture, is in
+`llms-reporting.txt`.
+
+### 4.2 Compilation map
+
+| Model input | Compiler | Output in the generated app |
+|---|---|---|
+| `erDiagram` | `parsers/mermaid.parser.ts` | migrations, DTOs, services, controllers, forms, grids |
+| `%%index` | same pass | real DDL indexes via `bus-tables.migration.ts.hbs` |
+| `%%enum`, `%%field enum:` | same pass | bound enums → typed columns + UI selects |
+| `%%category` | `parsers/category.parser.ts` | dashboard groups (`sys_category`) |
+| rules flowchart | `rules/flowchart-parser.ts` → `rules/jdm-converter.ts` | JDM graph → `sys_rule_definitions` |
+| `%%action` | `rules/index.ts` | JDM decision table → rule actions |
+| `%%hook` | `hooks/index.ts` | handler modules + registry around every CRUD op |
+| `stateDiagram-v2` | `workflows/index.ts` | BPMN → `sys_workflow_definitions` |
+| `kind: saga` + `%%step` | `workflows/steps.ts` | one `bpmn:serviceTask` per step |
+| `%%rbac` | `rbac/index.ts` | `sys_operation_access` + `sys_transition_access`, enforced by `EntityAccessGuard` |
+| whole document | `language/rag.ts` | retrieval chunks → pgvector `model_context` |
+
+**`%%category` has no shorthand, and `name:` is required.** `%%category Sources:
+DataSource, SchemaEntity` reads perfectly well and declares *nothing*:
+`category.parser.ts` requires a `name:` key and skips the line without one, so
+the grouping is lost and every entity in it falls into the default `General`
+category. The model still checks clean — the directive is a comment Mermaid
+ignores and a directive the generator ignores too. `EML154` is a warning that
+reports it, and it is worth knowing about because the failure looks like a
+dashboard that simply was not grouped.
+
+
+### 4.3 Templates — 171 Handlebars files, plus two verbatim trees
+
+```
+packages/generator/templates/
+├── common/                        11 .hbs — stack-independent
+│   ├── migrations/                bus-tables, sys-tables, fix-numeric-columns
+│   ├── seeds/                     sys-dictionary, sys-references, business-rules,
+│   │                              business-data, entity-categories, users-and-roles,
+│   │                              operation-access, report-designs
+│   └── design-tokens.json         the palette, stated once (not a template)
+├── tanstack-start-nestjs/
+│   ├── backend/    94 .hbs — modules: ai, audit, auth, bus, electric, hooks,
+│   │                         jobs, model-context, rules, sys, workflow,
+│   │                         workflow-definitions
+│   ├── frontend/   27 .hbs — routes, components, automation UI, i18n, fonts
+│   └── tests/      34 .hbs — harness/ + suites/ + run.ts (§4.4)
+├── wasm/           35 files — the standalone browser runtime. Not Handlebars:
+│                             plain .js copied verbatim, so after editing it run
+│                             `bun run build:wasm-runtime` from the repo root to
+│                             re-inline it. CI compares the inlined copy byte for
+│                             byte and fails on drift.
+└── wasm-overlay/    7 files — what the WASM stack swaps in over the generated
+                              app (pg → WebAssembly Postgres, bun → node). Also
+                              verbatim; the same re-inline step applies.
+```
+
+The counts move. Treat them as the shape of the tree rather than a fact to
+quote back — `find packages/generator/templates -name '*.hbs' | wc -l` is the
+answer at any given moment.
+
+Adding a template: create the `.hbs`, register it in
+`generator/src/templates/loader.ts`, supply context in the matching generator
+class — **then generate an app and build it.** Templates are `.hbs` text until
+rendered, so `bun run type-check` in this repo proves nothing about them. Two
+bugs reached main that way. CI's `generated-app` job exists for exactly this.
+
+### 4.4 The generated test suite
+
+`templates/tanstack-start-nestjs/tests/` renders a runnable **`node:test`**
+suite into every generated app. Not `bun:test` — it was ported, because the
+WASM stack has no Bun in it anywhere and a suite that needed one could not test
+the application it shipped with. `harness/testing.ts` supplies the twenty lines
+of `expect` that `node:test` lacks.
+
+- `harness/` — auth, http, factory, entities, rules, workflows, metrics,
+  report, manifest, server, and **`model.ts`**
+- `suites/`, in the order they run:
+
+| | Asserts |
+|---|---|
+| `00-health`, `01-auth` | the app is up and a session works |
+| `02-dictionary` | every column the ERD declared reached `sys_column` |
+| `02b-dictionary-layout` | every entity has a window, a tab under it, and a field per column — a missing `sys_field` row errors nowhere, it just renders a form without that input |
+| `02c-dictionary-references` | every column resolves to a control: dropdowns carry their `%%enum` values, lookups carry a target table and a label column. A degraded reference is a plain text box, which is invisible to a test that only checks the column exists |
+| `03-crud.<entity>` | CRUD per entity |
+| `04-bulk-seed` | volume, and that a re-run against a populated database still inserts |
+| `05-rules.<entity>` | the rules bound to each entity |
+| `06-rules-workflow`, `06b-workflow-transitions` | rules firing workflows; and that every edge `%%workflow kind: state` drew is accepted and every edge it did not is refused |
+| `07`, `09` | random and multi-step workflow runs |
+| `08-users-roles` | roles and what they may reach |
+| `10-benchmark`, `11-performance-budget` | measures and reports; then asserts on *ratios* (deep page vs first page, filtered vs unfiltered), which survive the change of machine that an absolute millisecond does not |
+
+**`harness/model.ts` is the point of the newer suites.** It carries the model's
+own `%%enum` values and state-machine edges into the assertions. A suite that
+reads the running application's dictionary and then asserts against that same
+dictionary proves only that the application is self-consistent — it passes just
+as happily when the generator dropped a value on the floor. Asserting against
+the model is what makes a lost dropdown option or a missing transition fail.
+
+**Run it with `run.ts`**, which the generated `package.json` exposes as
+`npm run test:e2e` (and `test:e2e:attach` for a backend that is already up):
+
+```
+node run.ts                 # everything, in order, 1000 records/entity
+node run.ts --small         # 10 records — a smoke run
+node run.ts --records 250   # an arbitrary volume
+node run.ts --fast          # skip the bulk-seed volume suite
+node run.ts --only crud     # substring filter on suite file names
+node run.ts --no-server     # attach to a backend already listening
+```
+
+Do **not** suggest `bun test` or `node --test suites/` over the whole
+directory. The suites are ordered (seed before rules before workflows) and
+`run.ts` gives each one its own process so a crash in one cannot take the rest
+down. Run together in a single parallel process they interfere — a delete rolls
+back because another suite is holding a reference to the row — and *which* test
+fails moves between runs.
+
+Two properties worth knowing before reading a failure:
+
+- **The suites leave their rows behind on purpose**, so a re-run against a
+  populated database is the normal case, not an abuse. Unique values are salted
+  with a per-run token (`E2E_RUN_TOKEN`, printed at the top of every run) folded
+  into any caller-supplied salt. Set it to reproduce an earlier run exactly.
+- **A backend the runner started is stopped by killing its process group**, not
+  its pid: `npm run start` is a launcher whose child holds the port. An orphan
+  left listening poisons the *next* run, which attaches to it.
+
+---
+
+## 5. The generated application
+
+### 5.1 Layout
+
+```
+generated-projects/<name>/
+├── backend/    NestJS + Fastify + Kysely, :4001
+│   └── src/{modules,migrations,database,common,lib,trigger}, main.ts, seed.ts
+├── frontend/   TanStack Start + React 19, :4000
+│   └── src/{routes,components,hooks,contexts,providers,i18n,lib}
+├── tests/      node:test E2E suite, driven by its own run.ts (see 4.4)
+├── model/      the .eml.mmd it was generated from
+├── frontend/public/manual.html   the generated manual (see 5.6)
+└── Dockerfile, docker-compose.yml, README.md
+```
+
+### 5.2 Database — three families
+
+**`bus_*`** — one table per model entity (`bus_lead`, `bus_account`, …). Your
+data.
+
+**`sys_*`** — the Application Dictionary and platform tables:
+
+| Table | Holds |
+|---|---|
+| `sys_table`, `sys_column` | every table and column: type, length, mandatory, unique, FK target |
+| `sys_window`, `sys_tab`, `sys_field`, `sys_field_group` | how each entity is presented |
+| `sys_element`, `sys_reference`, `sys_ref_list`, `sys_ref_table` | shared labels and lookups |
+| `sys_role`, `sys_user`, `sys_user_roles`, `sys_access` | roles, users, and which windows a role may open |
+| `sys_operation_access`, `sys_transition_access` | what `%%rbac` compiles to: per-operation and per-transition role restrictions |
+| `sys_workflow_transitions` | valid edges from `%%workflow kind:state`; guard returns 403 for any status write that crosses no declared edge, for every caller including the master role. Read them at `GET /api/workflows/transitions` |
+| `sys_rule_definitions` | seeded JDM rules |
+| `sys_workflow_definitions` | seeded BPMN; automations live here too, not in a table of their own |
+| `sys_workflow_runs` | one row per workflow execution |
+| `sys_audit_log`, `sys_change_log` | audit trail |
+| `sys_category` | dashboard grouping from `%%category` |
+| `sys_report_designs` | one default AnkaReport layout per entity; drives the Print button and Admin → Report Designs (see 5.7) |
+| `sys_session`, `sys_val_rule` | sessions, validation rules |
+| `sys_note` | user notes on records, append-only |
+| `sys_system` | database-backed runtime configuration: AI endpoints, feature toggles, rate limits, logging, CORS, and application identity (`APP_NAME`, `APP_DESCRIPTION`). Fallback chain: DB row (active + non-empty) -> `process.env` -> hardcoded default. Administrators edit it from Admin > System Configuration; `APP_DESCRIPTION` renders as a textarea for a multi-paragraph application summary that appears in the manual and the dashboard header |
+
+**auth tables** — Better Auth.
+
+### 5.3 The Application Dictionary — why screens are data
+
+Borrowed from Compiere ERP. Three layers:
+
+| Layer | Holds | Comes from |
+|---|---|---|
+| Table & Column | every table and its columns | your `erDiagram` |
+| Window / Tab / Field | one window per entity, a tab per record view, a field per displayed column, with order and grouping | derived from the columns |
+| Role | which windows a role may reach, and whether read-only | seeded, then yours |
+
+**Consequence for any UI question**: there is no per-entity page component to
+edit. A column marked mandatory in `sys_column` is required in every form; a
+column with a reference renders as a lookup rather than a free-text box. To
+change a screen, change the model and regenerate, or change the dictionary row
+in `/admin`. Do not go looking for `LeadForm.tsx` — it does not exist.
+
+### 5.4 Backend API
+
+Global prefix `/api`. Controllers:
+
+| Route | Purpose |
+|---|---|
+| `GET/POST/PUT/DELETE /api/bus/:entity[/:id]` | generic CRUD for every entity |
+| `GET /api/bus/:entity/meta` | dictionary metadata for the entity |
+| `GET /api/bus/:entity/fields/{form,grid}` | field definitions driving the UI |
+| `POST /api/bus/:entity/:id/promote` | entity promotion |
+| `/api/sys/{tables,columns,windows,tabs,fields,elements,references,field-groups}` | dictionary CRUD |
+| `/api/rules`, `/api/rules/:id/history`, `/api/rules/validate`, `/dry-run` | rules admin |
+| `/api/workflows/runs[/:runId]`, `/runs/:runId/retry`, `/entity/:name/:id` | workflow runs |
+| `GET /api/workflows/transitions[?table=&from=]` | the state-machine edges the model declared |
+| `/api/audit/:id/verify`, `/api/audit/:id/history` | audit trail |
+| `/api/auth/{health,permissions}` | auth |
+| `/api/model-context` | retrieval over the model |
+| `/api/v1/shape` | Electric sync (excluded from the prefix) |
+
+Accounts are **administrator-created by design** — a generated back-office app
+has no self-service signup.
+
+### 5.5 Frontend
+
+TanStack Start, file-based routing, dynamic segments use `$`:
+
+```
+routes/
+├── $entity.$id.tsx            generic record view — the dictionary-driven one
+├── <entity>.tsx, <entity>.$id.tsx   per-entity list and record
+└── admin/
+    ├── window/$windowId/tab/$tabId/field/$fieldId.tsx   dictionary editors
+    ├── elements.tsx, references.tsx, categories.tsx, roles.tsx
+    ├── rules/{index,new,$id.edit}.tsx
+    └── workflow-definitions/{index,$id/edit}.tsx
+```
+
+The dashboard is your `%%category` directives: one block per category, heading
+and description taken from the model. A final block, Application Dictionary, is
+the generator's own admin surface. Above them is a **Manual** button.
+
+**Both halves are scoped to the reader, and neither is a fixed list.** The
+entity blocks hold what `%%rbac … .read` lets this role see, with line items
+excluded because a child is reached through its parent; a category whose every
+entity belongs to someone else does not appear at all. The Application
+Dictionary block is the admin windows this role is granted through `sys_access`,
+so an administrator and an ordinary user see different cards there — and a
+window the dictionary defines is never withheld for want of an icon. Every
+card's icon comes from the dictionary: `sys_category.icon` for a heading,
+`sys_table.icon` for an entity, `sys_window.icon` for an admin card.
+
+### 5.6 The manual
+
+Generation writes **one self-contained HTML page** describing the application it
+just produced: a contents menu, then a section per entity giving every field with
+its control type, its constraints, its enumerated values and its help text,
+followed by that entity's relationships, its state machine, the rules that fire
+on it and the roles allowed to read it — then the rules, the processes, and how
+the application was built.
+
+| | |
+|---|---|
+| Rendered by | `packages/generator/src/manual/index.ts`, from the `ParsedModel` |
+| NestJS stack | `frontend/public/manual.html`, served at `/manual.html`, and also in the downloadable zip |
+| Browser stack | `manual.html` in the file map, served by the Service Worker |
+| Linked from | the **Manual** button on both dashboards |
+
+No stylesheet, no script, no font, no image — it is served by a Service Worker,
+by a static directory and by a `file://` double-click out of a zip, and one file
+with its CSS inline is the only form that survives all three.
+
+#### What the manual derives automatically
+
+Most of the manual requires no help text at all — it is read directly from the
+model's structure. The table below shows what each subsection of an entity
+section contains and where it comes from:
+
+| Subsection | What it shows | Source |
+|---|---|---|
+| Opening paragraph | Business description of the entity | `%%entity <Name> help:` — blank placeholder if omitted |
+| **Fields** — control type | How the field renders (text input, select, date picker, switch, textarea, lookup, …) | Derived from the attribute's type (referenceId): int → number, bool → switch, FK → lookup, string w/ `enum:` → select, etc. |
+| **Fields** — constraints | Mandatory, unique, max length | Derived from attribute flags and length |
+| **Fields** — enumerated values | List of allowed values with labels | `%%enum` + `%%field … enum:` + `sys_ref_list` |
+| **Fields** — purpose | Why the field exists, what value is expected | `%%field <E>.<f> help:` — dash if omitted |
+| **Relationships** | What entities this one links to and from, with cardinality | `erDiagram` FK declarations |
+| **Lifecycle** | State machine table: From state / To state / Event name | `%%workflow … kind: state` transitions |
+| **Rules and automation** | Decision rules, sagas, hooks that fire on this entity | `%%rule`, `%%workflow kind: saga`, `%%hook` |
+| **Access** | Roles allowed to read, create, update, delete | `%%rbac` directives |
+
+The global sections at the end of the manual (all rules, all processes, how the
+application was built, which tools were used) are also entirely automatic.
+
+**The only text a model author controls is `%%entity <Name> help:` and
+`%%field <Entity>.<field> help:`**. A field with no `help:` prints a dash in the
+Purpose column; an entity with none gets a placeholder sentence as its lede. The
+manual cannot describe an entity that does not exist or miss one that does — it
+can only fail to explain them, and that failure is visible to every reader.
+
+#### Writing `%%entity help:` — guidance for language models
+
+Write one or two sentences that answer: *what business role does this entity
+play, and when does a record of this type come into existence?*
+
+```
+%%entity Lead help: A prospective customer contact captured from marketing, events or direct outreach. A lead becomes an opportunity once a sales representative qualifies it.
+%%entity SupportCase help: A reported problem or request from a customer. Each case tracks the issue from first contact through resolution and any follow-up.
+%%entity Invoice help: A formal payment request issued to a customer account. Created on order dispatch; marked paid when settlement is confirmed.
+```
+
+**Two sentences is a floor, not a target.** The first says what the record is;
+the second says something a reader could not have guessed — when one comes into
+existence, what distinguishes it from the entity it sounds like, what breaks if
+it is wrong. An entity help that would read the same for any business is one
+nobody needed.
+
+Every entity should have one. An entity without `help:` signals to a reader that
+the manual was generated from a model that did not invest in documentation — the
+rest of the manual is still correct, but the opening paragraph is absent.
+
+#### Writing `%%field help:` — guidance for language models
+
+Write one or two sentences that answer: *what business purpose does this field
+serve, and what value is expected here?*
+
+Rules of thumb:
+- **Do not restate the field name.** "The customer email address" adds nothing to
+  a field called `email`. Instead, explain what it is used for:
+  `%%field Customer.email help: The primary contact address for invoices and automated status updates. Must be unique per account.`
+- **Name the business event, not the data type.** "A date" is useless. "The date
+  a signed copy was received from the counterparty" tells a user why it matters.
+- **Explain enum values inline when they carry policy.**
+  `%%field Order.status help: draft — editable; confirmed — locked for fulfilment; shipped — triggers customer notification; cancelled — terminates the order.`
+- **Describe FK fields in business terms.**
+  `%%field Invoice.account_id help: The company being billed. Must be an approved account; changing it after dispatch requires manager approval.`
+- **Mention rules attached to the field.** If a workflow fires when a status
+  changes to `approved`, say so: the manual is the only place that connection is
+  explained in plain language outside the rules editor.
+
+`%%field help:` has two consumers: the form (printed as hint text beneath the
+control) and the manual (the Purpose column). Writing it once covers both.
+
+**Help is where the domain knowledge goes, and nothing else in the model carries
+it.** The ERD says an entity has a `household_id`; only help says that a
+membership belongs to a family and that the family's screen is where it is read.
+Everything else in a model is structural — types, keys, cardinalities, states,
+roles — and structure is the half a reader can already see. Help is the half
+that has to be *known*: what the business calls this, why it keeps it, what
+depends on it, what goes wrong when it is wrong. Write it from the research and
+the brief, in the business's own vocabulary, at the level of detail somebody
+joining the company would need.
+
+This is the test to apply to every line before delivering: **could this sentence
+have been written without knowing anything about the business?** If yes, it is
+not help.
+
+```
+Bad:   %%field HouseholdMember.household_id help: Household id for HouseholdMember.
+Good:  %%field HouseholdMember.household_id help: The family this membership is in. Listed inside the household's own screen — a membership away from its household is not something anybody looks up.
+
+Bad:   %%entity Address help: Address is a business record in the platform.
+Good:  %%entity Address help: A postal address belonging to a party, kept as its own record because a party has several — registered, correspondence, often an overseas one — and because a change of address is a KYC event that has to be evidenced rather than typed over the old one.
+
+Bad:   %%field Holding.average_cost help: Average cost for Holding.
+Good:  %%field Holding.average_cost help: The weighted average price paid per unit across the lots making up this position. It is what an unrealised gain is computed against when lots are not being tracked individually.
+```
+
+The first of each pair would pass any coverage check and leaves the reader
+exactly where they started. **Three codes report the three ways a model fails
+here, all warnings:**
+
+| Code | Fires when |
+|---|---|
+| `EML152` | an entity carries no `%%entity … help:` at all |
+| `EML153` | an entity has columns with no `%%field … help:` — reported once per entity, naming them |
+| `EML151` | help that restates its own subject instead of describing it |
+
+`EML151` catches three shapes: `Unique identifier for X`, the column name in
+prose (`Status for Client`), and a template sentence (`X is a business record in
+…`). It is deliberately narrow, so real help that happens to be short — *The day
+this offer expires.* — does not fire. It exists because coverage can be complete
+and the help still worthless: a published model once carried help on all 91
+entities and all 551 columns, of which 699 lines were of exactly these shapes.
+
+**The primary key needs no help, and `EML153` does not ask for any.** It is a
+generated uuid, read-only on every form, and the only sentence anybody could
+write about it restates its name — which is what `EML151` then reports. Leave it
+out.
+
+**What to say, per kind of column:**
+
+| Column | Say |
+|---|---|
+| A reference (`_id`) | what the reference is *for* — "the ward this bed stands in", never "the ward id" |
+| An enum-bound column | what each value means to the business, because the dictionary lists the values and nothing says what choosing one *does* |
+| A lifecycle column | which moves are possible from which state — the state machine enforces a topology no form can show |
+| A money column | gross or net, which currency, and what it is compared against |
+| A date | which business event it records, and what is true before it is set |
+| A flag | what turning it on permits or prevents, and who may do so |
+
+### 5.7 Document reports (AnkaReport)
+
+Every generated application includes a document report subsystem. One default
+AnkaReport layout is **seeded automatically for every entity** at generation
+time — no EML directive required. Administrators can customise layouts; users
+can print records.
+
+#### The `sys_report_designs` table
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `table_name` | VARCHAR | UNIQUE — one design per entity table |
+| `name` | VARCHAR | Human-readable name, e.g. "Contact Default Report" |
+| `layout` | JSONB | AnkaReport `ILayout` object |
+
+#### Default layout
+
+Seeded by `seeds/06_report_designs.ts` (generated from
+`packages/generator/templates/common/seeds/report-designs.ts.hbs`).
+
+- **Header** — entity display name + " Report" in 20pt bold navy
+- **Content** — one label/value row per field; excludes `id`, `created_at`,
+  `updated_at`, `deleted_at`, `version`, and the primary key
+- **Footer** — "Generated by APPWITHAI" in 9pt grey
+
+Uses `ON CONFLICT (table_name) DO NOTHING` so regeneration never overwrites an
+administrator's customisation.
+
+#### Admin surface — Report Designs
+
+`/admin/reports` — lists every entity table with an **Designed** (emerald) or
+**New** (grey) badge.
+
+`/admin/reports/:tableName` — opens the AnkaReport designer pre-loaded with the
+existing layout. The designer's save button calls
+`PUT /api/sys/report-designs/:tableName`.
+
+#### Print button
+
+The record toolbar (`ADToolbar`) shows a **Print** button (violet styling) in
+the detail view **only** when a design exists for the current entity. Clicking
+it opens `ReportPrintModal`, which:
+
+1. Calls `AnkaReport.render()` with `data = { ...record, records: [record] }`
+2. Offers an **Export PDF** button (`renderer.exportToPdf(filename)`)
+
+The button is invisible when no design exists — no broken print experience.
+
+#### Backend endpoints
+
+All under `/api/sys/report-designs`, admin-only for writes:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/sys/report-designs` | list all designs |
+| `GET` | `/sys/report-designs/:tableName` | get design by table |
+| `POST` | `/sys/report-designs` | create |
+| `PUT` | `/sys/report-designs/:tableName` | upsert |
+| `DELETE` | `/sys/report-designs/:tableName` | delete |
+
+#### What the model controls
+
+Nothing. Report designs are automatic. The model author does not write any
+`%%` directive to enable or configure reports. Default layouts are seeded from
+the entity's column list; customisation is done through the Admin UI at runtime.
+
+---
+
+## 6. The modelling tool (`packages/web`)
+
+Port 3000. TanStack Start on Vite 8, React 19, Tailwind v4, Zustand.
+
+Wizard steps are declared **once** in `packages/web/src/types/project.ts`
+(`ProjectStep`, `STEP_ORDER`, `STEP_LABELS`, `STEP_ROUTES`); `ProgressStepper`
+derives itself from them.
+
+```
+init → design → logic → generate → enhance → deploy
+```
+
+- **init** — natural language in; agents domain → entity → relationship → mermaid
+- **design** — HITL ERD approval, `ErdFlowViewer`
+- **logic** — rules *and* workflows on one screen (a rule decides, a process
+  acts on what it decided; they were two steps and that ordering does not exist)
+- **automations** (`/projects/$id/automations`, alongside the wizard) —
+  trigger → conditions → steps builder, plus rule tables
+- **generate** — SSE progress
+- **enhance**, **deploy**
+
+### API route pattern
+
+```typescript
+import { createFileRoute } from "@tanstack/react-router";
+
+export const Route = createFileRoute("/api/projects/$id")({
+  server: {
+    handlers: {
+      GET: async ({ request, params }) => {
+        const access = await requireProjectAccess(request, params.id, "read");
+        if ("response" in access) return access.response;
+        const { getDatabase } = await import("@appwithai/core/services");  // lazy: Node-only
+        const db = getDatabase();
+        const project = await db.selectFrom("projects").selectAll()
+          .where("id", "=", params.id).executeTakeFirst();
+        return new Response(JSON.stringify(project), {
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    },
+  },
+});
+```
+
+Rules: dynamic-`import()` server-only deps inside the handler; always return a
+real `Response` with an explicit `Content-Type`; call `requireProjectAccess` on
+anything touching a project; do **not** use the deprecated `createAPIFileRoute`.
+
+### The automation model
+
+`packages/web/src/lib/automation/model.ts` — one sentence, three parts: a
+**trigger**, a flat list of **conditions** that must all pass, and an ordered
+list of **steps**. Deliberately not a graph: the executor runs steps in order
+and stops at the first failure.
+
+Triggers are the lifecycle hooks the generated services already fire —
+`created`/`beforeCreated`/`updated`/`beforeUpdated`/`deleted`/`beforeDeleted`,
+mapped to `afterCreate`/`beforeCreate`/… `serializeAutomation` writes the same
+Mermaid + directives the existing parser reads, so automations saved before the
+builder existed still open.
+
+### Two copies of the parsers
+
+The web app keeps its own flowchart parser, JDM converter and hook parser for
+the editors — they run in the browser and cannot import the generator. They read
+the same syntax but **do not decide what is generated**. When the two disagree,
+the generator's copy is the language and the web copy is the bug.
+
+---
+
+## 7. Shared types
+
+```typescript
+// packages/core/src/types/entity.types.ts
+interface Entity {
+  name: string;
+  tableName: string;
+  attributes: EntityAttribute[];
+  indexes?: EntityIndex[];      // from %%index
+  audited?: boolean;
+  softDelete?: boolean;
+}
+
+// packages/generator/src/pipeline/generate-application.ts
+interface ParsedModel {
+  entities: Entity[];
+  relationships: Relationship[];
+  categories: EntityCategory[];   // %%category
+  enums: EntityEnum[];            // %%enum + %%field enum:
+  rules: CompiledRule[];          // %%rule flowcharts
+  hooks: CompiledHook[];          // %%hook
+  workflows: CompiledWorkflow[];  // kind: state
+  sagas: CompiledSaga[];          // kind: saga
+}
+
+// packages/generator/src/rules/index.ts
+interface CompiledRuleAction {
+  name: string;
+  type: string;                   // trigger-workflow | validation-error | …
+  when: string;                   // Zen expression; "true" fires on every write
+  props: Record<string, string>;
+}
+```
+
+Load the language definition through the typed accessor, never by re-parsing:
+
+```typescript
+import { loadLanguageDefinition, normalizeType, cardinalityKind, isHookType }
+  from "../language";
+
+normalizeType("varchar");    // "string"
+cardinalityKind("||--o{");   // "oneToMany"
+isHookType("beforeCreate");  // true
+```
+
+---
+
+## 8. Environment and operations
+
+### Commands
+
+| Command | Purpose |
+|---|---|
+| `bun install` | dependencies (**never npm/pnpm/npx — use bun/bunx**) |
+| `bun run dev` | modelling tool, :3000 |
+| `bun run dev:mastra` | Mastra AI service, :4111 |
+| `./scripts/start-llm.sh` | local OpenAI-compatible model, :8000 |
+| `bun run type-check` | repo TypeScript |
+| `bun run type-check:language` | `language/` (own config: Bun-style `.ts` imports) |
+| `bun run lint:fix` | Biome check + autofix |
+| `bun run test` | Vitest — 540 passing, 6 skipped, across core/generator/ai/web |
+| `bun language/checker.ts <f.mmd>` | validate a model |
+| `bun language/fixer.ts <f.mmd.error>` | apply the eight auto-repairs |
+| `bun run build:language-tools` | rebuild `html/checker.js` + `html/fixer.js` (§10.6) |
+| `bun run test:language-tools` | assert those two still agree with the CLI |
+| `bun run test:wasm` | drive the browser stack in Chromium |
+| `bun run build:wasm-runtime -- --check` | is the inlined WASM runtime current? |
+| `bun run build:fullstack-browser --check` | is `html/assets/appwithai-fullstack.js` current? |
+| `bun run build:wasm-browser -- --check` | is `html/assets/appwithai-wasm.js` current? |
+| `bun run build:viewers` | rebuild `website/viewers/eml-model.js` — the reader the viewers draw from (§10.0) |
+| `bun run build:viewers --check` | is it current? |
+
+The five `--check` variants compare a committed artifact against a fresh build,
+byte for byte. Three of the five are `Bun.build` output, whose bytes depend on the
+bun version **and** the platform, so a mismatch does not always mean "you forgot
+to rebuild" — the failure message says which case it is and what to do. Drop the
+`--check` to rebuild. CI pins bun `1.4.0` on `linux-x64` for exactly this
+reason; building elsewhere produces a third variant that looks right locally and
+is byte-wrong for CI.
+
+**Known-broken**, do not recommend: `bun run build && bun run start`. With a
+reachable `DATABASE_URL` the built server loads `@ag-ui/mcp-apps-middleware`,
+which `require()`s the ESM-only `eventsource` through the MCP SDK; Bun refuses,
+and the server answers 204 to everything including `/api/health`. Use
+`bun run dev`.
+
+The scripts that used to be listed here — `migrate`, `test:app`, `test:e2e`,
+`test:generator`, `test:complete`, the root `vitest.config.ts` and
+`packages/web`'s eslint `lint` — have been removed rather than documented. They
+pointed at files that do not exist.
+
+### Environment variables
+
+**AI** (`packages/ai/src/config.ts` is the only place model config lives — never
+hard-code a model string or base URL): `LOCAL_AI_BASE_URL`
+(`http://127.0.0.1:8000/v1`), `LOCAL_AI_MODEL`
+(`mlx-community/Qwen3.8-27B-4bit`), `LOCAL_AI_API_KEY`,
+`LOCAL_AI_EMBEDDING_MODEL` (`bge-small-en-v1.5`),
+`LOCAL_AI_EMBEDDING_DIMENSIONS` (384 — the pgvector column width; changing the
+model means changing this **and** re-ingesting).
+
+`ANTHROPIC_API_KEY` is **dead config**; `@anthropic-ai/sdk` is vestigial.
+
+**Database**: `DATABASE_URL`, or `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/
+`PGDATABASE`. Connection config lives only in
+`packages/core/src/config/db.config.ts`. **pgvector is required** — retrieval
+does `CREATE EXTENSION vector`; CI uses `pgvector/pgvector:pg18`.
+
+**Web**: client vars must be `VITE_`-prefixed. Server handlers use
+`process.env`.
+
+**Security**: `SESSION_SECRET`, `JWT_SECRET`, `DB_ENCRYPTION_KEY` (base64, 32
+bytes — rotating it invalidates every stored project connection).
+
+**Generated app runtime config**: in a generated application, AI config
+(`AI_BASE_URL`, `AI_API_KEY`, `AI_EMBEDDING_MODEL`, `AI_EMBEDDING_DIMENSIONS`),
+feature toggles (`ELECTRIC_URL`, `IMMUDB_ENABLED`, `AUDIT_READS`,
+`ENABLE_MODEL_CONTEXT`), rate limiting (`THROTTLE_TTL`, `THROTTLE_LIMIT`),
+logging (`LOG_LEVEL`, `LOG_PRETTY`), and CORS (`CORS_ORIGIN`) can also be
+managed from the database via the `sys_system` table, making the `.env` entries
+optional for those settings. Bootstrap variables (`DATABASE_URL`,
+`BETTER_AUTH_SECRET`, `PORT`, `HOST`, `NODE_ENV`) cannot move to the database.
+
+### CI
+
+`ci.yml` pins `BUN_VERSION: "1.4.0"` and runs four jobs:
+
+| Job | Does |
+|---|---|
+| **checks** | type-check, Biome (errors only), unit tests, then the five bundle-currency `--check` steps, `test:language-tools` and `test:llmtext` |
+| **generated-app** | generate from `examples/drug-discovery.eml.mmd` → build backend/frontend → type-check `tests/` → migrate+seed a pgvector Postgres → start the backend → `node run.ts --no-server` |
+| **generated-wasm-app** | generate the stack twice, with and without the overlay, and assert the list of files the overlay changed; assert no Bun is left in the generated app; type-check the suite and load every harness module under Node; then migrate, seed and exercise it on WebAssembly Postgres — on a runner with no Postgres installed, which is the claim |
+| **wasm-e2e** | `test:wasm` — the browser stack in Chromium, plus the CLI specs that assert the overlay's whole footprint: 9 files changed, 6 added, none removed, and **exactly one** of the nine is application source (`immudb.service.ts`). That last number is the claim the approach rests on — the backend never knew what was behind its `Pool` |
+
+| Other workflow | Does |
+|---|---|
+| `github-neon.yml` | generate from an online `.mmd`, run against Neon, verify, optionally publish |
+| `eml-generate-and-publish.yml` | run the `eml` CLI over a model, publish the app to a repo |
+
+All three pin the same `BUN_VERSION`; none uses `bun-version: latest`.
+
+### Known security limits — state these plainly if asked
+
+- `packages/web/src/lib/password.ts` is a **fixed-salt SHA-256**: fast to
+  brute-force, identical passwords hash identically. Kept because stored hashes
+  are already in this format; replacing it needs a rehash-on-login migration.
+- The rate limiter is **in-memory, single-process**; counters reset on restart.
+  Redis before running more than one instance.
+- `requireProjectAccess` is the shared authorization helper, but
+  `api/projects/$id/index.ts` still carries a local copy.
+
+---
+
+## 9. Worked example — building a CRM
+
+Mirrors the human guide at https://www.appwithai.org/guide/index.html. Model:
+`language/examples/crm.eml.mmd`.
+
+**Scale**: 1 model file · 17 entities · 7 categories · 26 enums · 20 indexes ·
+8 rules · 5 actions · 7 hook workflows (38 `%%hook`) · 5 state machines ·
+5 sagas (29 `%%step`) → **~400 generated files**.
+
+### 9.1 The skeleton
+
+```
+%% ---- Section 1: ERD ----
+%%meta name: Enterprise CRM
+%%meta kind: erd
+%%meta version: 1.0.0
+%%category name: Sales Pipeline; icon: TrendingUp; entities: Opportunity, Product
+%%enum LeadStatus: new, working, nurturing, qualified, converted, disqualified
+erDiagram
+    Lead {
+        string id PK
+        ...
+    }
+    Campaign ||--o{ Lead : "generates"
+%%field Lead.status enum: LeadStatus
+%%index Lead(owner_id, status)
+%%entity Lead audited: true
+
+%% ---- Section 2: rules ----
+%%meta kind: rules
+%%rule leadScoring on Lead event: beforeCreate priority: 10
+flowchart TD
+    ...
+
+%% ---- Section 3: workflows ----
+%%workflow LeadConversion entity: Lead kind: saga trigger: rule
+flowchart TD
+    ...
+```
+
+One file, several diagrams, read top to bottom. A section starts at a Mermaid
+keyword and runs to the next. **Directives above a section configure it;
+directives inside it annotate what it declares.**
+
+### 9.2–9.3 Rules and workflows
+
+Covered in §3.4–3.5. The binding line is what turns a flowchart into a rule:
+`%%rule leadScoring on Lead event: beforeCreate priority: 10` — name (appears in
+the Business Rules screen and is how a saga step can reference the rule instead
+of copying its table), entity (must be declared in the ERD), event (any of the
+13 hooks; `before*` can still block the write), priority (order among rules on
+the same entity and event; lower runs first).
+
+### 9.4 Generate
+
+```bash
+bun language/checker.ts language/examples/crm.eml.mmd
+#   crm.eml.mmd  0 errors · 0 warnings
+
+bun packages/generator/src/cli/generate.ts generate \
+  --input language/examples/crm.eml.mmd --output generated-projects/crm \
+  --name crm --port 4001 --frontend-port 4000 \
+  --records-per-entity 25 --force --no-setup
+```
+
+The generator runs the checker itself; running it first is instant and tells you
+the truth before anything is written. It prints entities and attribute counts,
+then the rules, hooks, sagas, state machines and categories it compiled.
+
+The browser designer is the better first path — it renders the ERD, validates as
+you type, and keeps versions. Both call the same pipeline, so both produce the
+same application.
+
+### 9.5–9.6 The application, and the dictionary
+
+Nothing on the screens was designed for the CRM specifically. The dashboard is
+seven blocks for seven `%%category` directives; every entity gets the same list
+(search, sortable columns, pagination, New, a Help chip) drawn from the
+dictionary's field definitions.
+
+**The fastest feedback loop in the system**: rename a category or move an entity
+between groups in the model, regenerate, re-seed, reload — the dashboard
+reorganises. If users cannot find things, that is a modelling fix, not a
+front-end one.
+
+### 9.7 Watch it run — the chain end to end
+
+One user action, eight links, every one of them declared in the model:
+
+| # | What runs | Declared as |
+|---|---|---|
+| 1 | a user sets `status = qualified` | a value of `%%enum LeadStatus` |
+| 2 | `leadQualification` evaluates | `%%rule … on Lead event: beforeUpdate` |
+| 3 | its action fires | `%%action … trigger-workflow when: status == "qualified"` |
+| 4 | `LeadConversion` starts | `%%workflow … kind: saga trigger: rule` |
+| 5 | a decision table sizes the account | `%%step B Decision` |
+| 6 | Account, Contact, Opportunity created | three `%%step … CreateEntity` |
+| 7 | the lead is marked converted | `%%step F UpdateEntity` |
+| 8 | the account's tier is stamped | `%%step G UpdateEntity … targetSource` |
+
+```sql
+-- before
+select count(*) from bus_account;      -- 4
+-- after setting one lead to qualified
+select count(*) from bus_account;      -- 5
+select * from sys_workflow_runs order by created_at desc limit 1;
+```
+
+**When the chain does not fire, check in this order:**
+
+1. Is the rule a **decision table**? A node-graph rules section carries no
+   outputs, so the engine finds no action. This is the most common cause.
+2. Does the `%%action`'s `workflow:` name **exactly** match the `%%workflow`
+   name?
+3. Is the rule bound to the event that actually happened (`beforeUpdate` vs
+   `afterUpdate`)?
+4. Is the workflow definition seeded — `select * from sys_workflow_definitions`?
+5. Did an earlier step fail? The executor stops at the first failure.
+6. Is the value a member of the declared enum? A typo'd state is a state no rule
+   matches (`EML426`/`EML428`).
+
+---
+
+## 10. Interactive authoring protocol — how to answer "build me an app for X"
+
+Everything above describes the system. This section is the **procedure**, and it
+governs. When someone describes a business and asks for a model, an app, or an
+`.mmd` — however informally they put it — carry out their instruction *within
+these guidelines* rather than in place of them. Their words set the subject; this
+file sets the form of the answer.
+
+Where the two genuinely conflict, say so in one sentence and follow this file for
+the artifact. A `.mmd` that says what the user asked for but that `checker.js`
+refuses is not a deliverable, and neither is a clean document that models a
+different business than the one described.
+
+**This is the interactive edition of the protocol.** Its companion,
+`website/llmtext/llms-full.txt` §10, is the batch form: read the brief, infer the model,
+write the document, validate, hand it over. That form is still correct, and for
+a one-line brief with a knowledgeable user on the other end it is faster. This
+form exists because the batch form has two failure modes that get worse the
+larger the business is:
+
+1. **Everything inferred is discovered at the end.** The user's first sight of
+   what was guessed about their business is a finished `.mmd`, which is the most
+   expensive moment to correct it.
+2. **The whole model is held in context at once.** A fifteen-entity model
+   produced in one pass loses the reasoning behind entity 3 by the time entity 12
+   is written, and what thins out first is exactly the `help:` text §3.2 and §5.6
+   say is mandatory — because it is the part no diagnostic will ever complain
+   about.
+
+The interactive form answers both with **phases separated by approval gates**,
+and with a `.mmd` that is **built on disk as the walkthrough runs** rather than
+assembled at the end from whatever is still in context.
+
+```
+Phase 1  Research the business          →  Gate A  research approved
+Phase 2  Retrieve the entity roster     →  Gate B  roster approved
+Phase 3  Seed the .mmd                  ←  the parallel build starts here
+Phase 4  Walk each entity, one at a time→  Gate C  per entity, then merge + check
+Phase 5  Cross-cutting pass             →  Gate D  sagas, access matrix, coverage
+Phase 6  Validate to clean              →  Gate E  escalate what needs the user
+Phase 7  Deliver
+
+        from Phase 3 onward, every step ends:  edit → fixer → checker → clean
+```
+
+Do not skip a phase, and do not cross a gate the user has not approved, and do
+not open a step while the last one left the `.mmd` dirty.
+
+### 10.0 How to run this protocol
+
+**Ask, do not announce.** Every gate is an `AskUserQuestion` call (or the
+equivalent in whatever surface you are running on) — one question at a time, with
+real options. A gate presented as prose ("let me know if this looks right") is
+not a gate: it invites a nod, and a nod is not an approval of anything specific.
+
+**One question at a time — where the answer changes the next question.** The
+rule is a test, not a count. Two questions belong in separate turns when the
+first one's answer would change how you ask the second: *who pays for this*
+changes what you go on to ask about billing, so it is asked and answered before
+anything downstream of it. Questions that are genuinely independent — is the
+emergency department in scope, is consent a record — inform nothing in each
+other and may be put together.
+
+What the rule forbids is the numbered list of eleven questions the user has to
+answer in one message, because that is a form rather than a walkthrough and it
+moves the work back onto them. What it does not require is turning four
+independent choices into four round trips, which reads as diligence and is in
+fact a waste of the user's afternoon. If you would ask them in the same breath
+in a meeting, ask them together.
+
+**Propose, do not interrogate.** Every document and every dossier this protocol
+produces is presented **already filled in** from domain knowledge and the
+research, for the user to correct. A blank template the user must complete is a
+form, not a walkthrough — and it moves the work back onto the person who asked
+you to do it. Fill it the way a careful analyst would, then say plainly what you
+filled and what you guessed.
+
+**Never cross a gate on inference.** Where the brief is silent on something
+ordinary, fill it and mark it as filled. Where it leaves a genuine fork — two
+plausible businesses with materially different models — ask. The difference
+matters: a filled gap is visible in the document under review and cheap to
+correct; a silent choice between two businesses is neither.
+
+**The session directory is the state, not the conversation.** Write each phase's
+output to disk *before* starting the next phase. A context compaction mid-session
+must cost nothing but the chat scrollback.
+
+**A gate is a loop, not a verdict.** The user does not approve or reject; they
+look, ask for a change, look again, and approve when they are satisfied. Every
+gate from Phase 3 onward therefore has three arms, and the middle one is the one
+that gets left out:
+
+```
+   present  →  the user looks  →  approve      →  next phase
+                     │                ↑
+                     └──  amend  ──────┘   re-present, re-check, re-show
+```
+
+Offer the middle arm explicitly, every time — *"tell me what to change and I
+will show you again"* — because a user given only approve-or-reject will approve
+something they are not happy with rather than restart a phase. There is no limit
+on how many times a gate loops. A gate crossed on a shrug is the failure this
+protocol exists to prevent, and it costs far less here than at Phase 6.
+
+**Show the model, do not only describe it.** Every gate from Phase 3 onward asks
+the user to approve something they cannot read in `.mmd` source: an entity's
+columns and their controls, a lifecycle's legal moves, a decision flow's
+branches, who ends up able to see what. Mermaid renders the ERD and nothing
+else — the rules, the workflows, the enums and the access control are `%%`
+directives it treats as comments — so a stakeholder pointed at a Mermaid preview
+is being shown the smallest part of what they are approving.
+
+**The viewers are at `https://www.appwithai.org/viewers/`**, and they draw all of
+it — entities with their columns, badges and help text, relationships in crow's
+foot notation, state machines with the moves the generated API will allow, sagas
+as an ordered ladder, decision tables as tables, the roles and the entity counts
+each one gets. Tell the user about it **once, at Phase 3**, when the seed first
+exists, and name it again at any gate whose subject is easier seen than read.
+
+Three ways in, and the first is the one to recommend: **Watch a file** re-reads
+the `.mmd` from disk as it changes, so the picture keeps up with the walkthrough
+without the user doing anything (Chromium-family browsers only — it needs the
+File System Access API). **Open a file** and **paste** work everywhere.
+
+It is not a second opinion about the document. The page reads the model with the
+same parser, rule compiler, workflow compiler and RBAC derivation the generator
+runs, and it reports the same checker verdict as §10.6 — so what it draws is
+what `appwithai generate` will build, and a diagnostic shown there is a real
+diagnostic. It is a picture of the model, never an approval of it: the gates are
+still yours to ask for.
+
+**Hand over the file at every gate, do not merely mention the page.** A reader
+on a chat surface has no access to the `.mmd` on your disk, so "open it in the
+viewer" is an instruction they cannot follow. Attach the current file to the
+message that opens the gate; they load it with **Open a file** and look at the
+version being approved rather than the version two entities ago. Ask once, at
+Gate B, how often they want it — every gate, phase boundaries only, or on
+request — and then keep to that.
+
+**What the viewer catches that the checker cannot.** The checker answers *would
+the generator accept this document*. It does not answer *is this the application
+you meant*, and the two come apart in ways that are invisible in a verdict line:
+an entity the parser silently dropped, a lifecycle whose states no `%%enum`
+declares, a role that turns out to read 0 of 14 entities, a decision table with
+a row that can never match. Each of those is a clean report and a broken
+application. Look at the picture before closing a gate, not only at the counts.
+
+**Resume before you restart.** On invocation, look for `docs/eml-sessions/*/`
+first. If a session exists whose `progress.md` shows unfinished work, show its
+state and offer to resume it. Starting a second session for the same business is
+how two half-models get built.
+
+**The checker and the fixer run at every step, not at the end.** Phase 6 is
+where validation *finishes*, not where it starts. Phases 1 and 2 produce prose
+and have nothing to check; from the moment the seed exists (§10.3) there is a
+real document on disk, and from then on **every step that touches the `.mmd`
+closes the same way**:
+
+```
+   edit the .mmd  →  fixer  →  checker  →  clean?  ──yes──→  gate, then next step
+                       ↑                     │
+                       └────── no ───────────┘   fix the cause, run both again
+```
+
+Both, in that order, every time — the fixer first because the seven auto-fixable
+codes (§10.6) are noise the user should never be asked about, the checker after
+because the fixer's own repairs can leave a new diagnostic behind. The tools are
+the ones in §10.6; run them there once and reuse the command.
+
+Three rules hold that loop honest:
+
+- **No gate closes over a document with errors.** Not Gate C, not Gate D. A step
+  that ends with an unchecked or dirty `.mmd` has not ended — it has been
+  abandoned in the middle, and the next step will build on it.
+- **The warnings a phase is *expected* to carry are named where they occur** —
+  the seed's one `EML102` per entity (§10.3) is the only such case, and it
+  shrinks by one with each entity walked. Any warning not named in this section
+  is treated as a finding, not as background.
+- **The fixer repairs; it does not decide.** It touches the seven codes and
+  nothing else. A diagnostic that could be repaired two ways is a question for
+  the gate you are standing at — §10.6's escalation rule applies at every step,
+  not only at Phase 6, and that is most of why this form is interactive.
+
+Log every run in `03-validation.md` as you go, one line per step: the step, the
+counts before, what the fixer changed, the counts after. At Phase 6 that log is
+the evidence the model was built clean rather than cleaned up at the end.
+
+#### The session directory
+
+**Rooted where the user's work is, not where you happen to be.** In a single
+project that is the repository root; in a workspace holding several, ask which
+one at Gate A rather than picking; where there is no repository at all, any
+directory the user names will do. What matters is that it is one place, it
+survives a compaction, and the user knows where it is — say the absolute path
+once when you create it.
+
+```
+<project root>/docs/eml-sessions/<business-slug>/
+├── progress.md            # phase, gate status, per-entity state — the resume file
+├── 00-research.md         # Phase 1 output
+├── 01-entities.md         # Phase 2 roster
+├── entities/<Entity>.md   # one dossier per entity, Phase 4
+├── 02-cross-cutting.md    # Phase 5
+├── <business-slug>.mmd    # ⭐ the model, built incrementally from Phase 3 onward
+└── 03-validation.md       # Phase 6 checker log
+```
+
+`<business-slug>` is the business name, lower-case, hyphenated, no spaces
+(`acme-dance-studio`). The `.mmd` carries the same stem, because §10.7 hands that
+exact file over and the user takes it straight to `appwithai generate`.
+
+#### `progress.md` — the resume file
+
+Rewrite it at every gate. It is the only thing a resumed session can trust:
+
+```markdown
+# acme-dance-studio — progress
+Phase: 4 (entity walkthrough)  ·  Updated: 2026-03-11
+
+| Gate | State |
+|---|---|
+| A research    | approved |
+| B roster      | approved |
+| C entities    | 4 of 9   |
+| D cross-cut   | — |
+| E validation  | — |
+
+| Entity | State | Note |
+|---|---|---|
+| Studio      | approved | |
+| Room        | approved | |
+| Instructor  | approved | |
+| ClassOffering | approved | |
+| ClassSession  | **open** | next |
+| Booking       | pending | |
+| Waitlist      | pending | |
+| Member        | amended | gained `member_since` while walking Booking |
+| Payment       | pending | |
+
+Open questions for the user: cancellation window is 12h [assumed], needs confirming.
+```
+
+#### Completion modes
+
+End every session by naming one, so the user knows what they are holding:
+
+| Mode | Meaning |
+|---|---|
+| `DONE` | The `.mmd` checks clean, warnings cleared or explained, every gate approved. |
+| `DONE_WITH_CONCERNS` | Delivered, with named open questions or surviving warnings listed in writing. |
+| `NEEDS_CONTEXT` | Blocked at a gate on answers the user has not given. Say which gate and which question. |
+
+### 10.1 Phase 1 — Research the business
+
+**The first output is not Mermaid, and it is not a list of tables.** It is a
+research document about the business, written before any entity is named.
+
+A business description is always thinner than the model it implies. Someone who
+says "a booking system for a dance studio" has not mentioned instructors, rooms,
+cancellation windows, waitlists, or what happens to a class when its instructor
+calls in sick — and every one of those is a table, a rule or a workflow. But the
+answer to that is not to start naming tables faster. It is to understand the
+business first, because the entity roster falls out of that understanding almost
+mechanically, and an entity roster derived from a misunderstanding is a model
+that validates and a business that does not run.
+
+Write `00-research.md` covering all eight:
+
+1. **What the business does, and who pays for it.** One paragraph. The thing
+   being sold, and the transaction that makes money.
+2. **The actors.** Every kind of person who touches the system, and — more
+   useful than a job title — what each of them is trying to *finish*. A
+   receptionist trying to finish a booking and a manager trying to finish a
+   month-end reconciliation need different screens and different roles.
+3. **The artefacts that change hands.** The quote, the ward round, the claim,
+   the class session, the invoice. These are the entities the business already
+   has names for, and using its names rather than yours is most of what makes a
+   generated application feel like it belongs.
+4. **The lifecycle of the central artefact.** From the moment it comes into
+   existence to its terminal state, in the business's own vocabulary. This is
+   the first draft of a `stateDiagram-v2` and it is worth getting right here,
+   where it is prose and cheap to change.
+5. **The decisions someone makes with judgement today.** Pricing, eligibility,
+   approval thresholds, discounts, escalation, limits. Each of these is a
+   candidate `%%rule` — and each carries the question §3.4 makes expensive to
+   get wrong: does it merely *decide*, or must it also *act*?
+6. **The vocabulary.** The recurring domain terms and what each one means to
+   this business specifically. "Session", "case", "line", "member" and "account"
+   all mean different things in different industries; write down which one is
+   meant here. These become entity names, field names and enum values.
+7. **Policy and regulatory constraints.** Retention, consent, audit,
+   segregation of duties, anything with a statutory deadline. These become
+   `%%rbac` rules, audit flags and required fields, and they are the ones a
+   model never recovers from omitting because nobody thinks to ask later.
+8. **What is explicitly out of scope.** As valuable as the rest. It is what
+   stops the roster growing by a third at Gate B.
+
+**Tag every statement.** Three tags, and they are what the gate is about:
+
+| Tag | Meaning |
+|---|---|
+| `[stated]` | The user said this. |
+| `[inferred]` | Not said, but follows from what was — the careful-analyst fill. |
+| `[assumed]` | A real guess. It could plausibly be otherwise. |
+
+```markdown
+- The studio sells class packs and drop-in places. [stated]
+- A place in a class can be cancelled by the member up to a cutoff, after which
+  the credit is forfeited. [inferred — every studio has a cutoff]
+- The cutoff is 12 hours before the session starts. [assumed]
+- Waitlisted members are promoted in the order they joined the list. [assumed —
+  could be priority by membership tier]
+```
+
+> **Gate A — research approved.**
+> Walk the `[assumed]` lines first, then the genuine forks (§10.0's rule on what
+> may share a turn applies). Do not discuss tables, fields or types in this
+> phase — the moment the conversation turns to schema, the business questions
+> stop getting asked. Do not proceed until the user approves the document.
+>
+> **Do not ask them to approve the document itself.** `00-research.md` runs to
+> a couple of hundred lines and nobody reads one to answer a question. Approval
+> is asked against a summary you write for the purpose: *the half-dozen things
+> you inferred that they never said*, in one paragraph, plus the tag counts —
+> "9 stated, 31 inferred, 12 assumed" — because on a one-line brief that
+> histogram is itself the finding. A brief that yields three stated lines and
+> forty assumed ones is not a brief; say so, and expect the gate to loop.
+>
+> **Name the forks as forks.** A question the user cannot tell is consequential
+> gets a shrug. Say what each answer changes — "this decides roughly a third of
+> the roster" — and give a recommendation with its reasoning, so approving the
+> default is an informed act rather than a deferral.
+
+### 10.2 Phase 2 — Retrieve the entity roster
+
+Now derive **every** entity the business needs, from the approved research —
+not only the ones the brief named. Three sources, and the second and third are
+where batch modelling loses entities:
+
+- the artefacts and actors from the research;
+- the **reference and lookup entities** the described flow silently depends on —
+  a room, a tier, a reason code, a tax rate;
+- the **join entities** its many-to-many relationships require, each of which is
+  usually a real business object with its own fields once you look at it (a
+  `Booking` is not a join table, it is a booking).
+
+Write `01-entities.md`. Per entity:
+
+| Column | Content |
+|---|---|
+| Name | PascalCase, from the business's vocabulary (§10.1.6), not a generic synonym |
+| Role | One line: what it is, and when a record of it comes into existence |
+| Source | Which research paragraph implies it — an entity nothing implies is one to challenge |
+| Placement | **standalone or child**, decided by the three questions below, answered in writing |
+| Category | The `%%category` it appears under. Children get none — a category lists what appears on the dashboard, and a child does not (§3.3.1) |
+| Read roles | First draft of who may see it — the `%%rbac … read` matrix |
+
+**Decide parent/child here, not later**, with §3.3.1's three questions asked
+explicitly of every entity and answered in the document:
+
+1. Would a list of these records, *away from their owner*, be useful to anyone?
+2. Does the row's identity depend on the owner — "line 1 of invoice 7", not
+   "line 1"?
+3. Would deleting the owner make the row meaningless?
+
+Any *yes* to 2 or 3, or *no* to 1, is a child: `%%entity <Child> parent: <Parent>`,
+and that child is left out of `%%category` — a category is the dashboard's
+grouping and a child has no card there (`EML150`). The noun is usually the tell —
+a *line*, an *item*, a *detail*, an *entry*. Getting this wrong is not cosmetic:
+a missed child puts a screen on the dashboard listing every line ever written,
+which is a screen nobody opens, and leaves the parent record showing no sign of
+its own lines.
+
+The checker will not decide it for you, but it will not let you skip the
+question either: `EML149` names every entity whose shape says line item and
+whose model says nothing, together with the parent it would link to. Bring that
+list to **Gate B** — it is the cheapest moment to settle it, and the roster is
+where the user's own answer belongs.
+
+Close the document with a **relationship sketch** — every pair that relates, the
+cardinality, and which side carries the foreign key. It does not need to be
+complete; it needs to be enough that the skeleton in Phase 3 can be drawn.
+
+> **Gate B — roster approved.**
+> This is the cheapest moment in the whole protocol to add, remove, merge, split
+> or rename an entity, and it is the gate where the user's own domain knowledge
+> lands hardest. Present the roster as a list they can edit, and ask specifically:
+> *what does this business have that is not on here?* Do not proceed until they
+> approve it.
+
+### 10.3 Phase 3 — Seed the `.mmd` *(the parallel build starts here)*
+
+The moment Gate B closes, **create the model file**. Not at the end of the
+walkthrough — now, before a single entity has been detailed.
+
+Write `docs/eml-sessions/<slug>/<slug>.mmd` containing:
+
+- the `%%meta` header — `name`, `kind: erd`, `version`;
+- `%%category` directives from the roster;
+- an `erDiagram` declaring **every approved entity** with `id PK` only;
+- `%%entity <Name> help:` on each, from the roster's approved one-line role;
+- `%%entity <Child> parent: <Parent>` for every child;
+- the relationship lines from the roster sketch.
+
+```mermaid
+%%meta name: Acme Dance Studio
+%%meta kind: erd
+%%meta version: 1.0.0
+%%category name: Scheduling; icon: calendar; entities: ClassOffering, ClassSession
+%%category name: Membership; icon: users; entities: Member, Booking
+erDiagram
+    Member {
+        string id PK
+    }
+    ClassOffering {
+        string id PK
+    }
+    ClassSession {
+        string id PK
+    }
+    Booking {
+        string id PK
+    }
+
+    ClassOffering ||--o{ ClassSession : "scheduled as"
+    ClassSession  ||--o{ Booking      : "holds"
+    Member        ||--o{ Booking      : "makes"
+
+    %%entity Member help: A person who buys class packs and books places in sessions. Created at first sign-up, kept after their last booking so history survives.
+    %%entity ClassOffering help: A class the studio sells — a name, a level and a duration. Distinct from the individual sessions it is scheduled as.
+    %%entity ClassSession help: One dated, timed occurrence of an offering, in a room, taught by an instructor. This is the thing a member actually books.
+    %%entity Booking help: One member's place in one session. Created when the place is taken; terminal once attended, cancelled or forfeited.
+```
+
+**The brace has to end the line.** Every entity above spans three lines, and
+that is not a formatting preference. `MermaidParser` opens an entity block on
+`^<Name>\s*\{$` — a name, optional space, an opening brace, *end of line*. The
+tempting one-liner
+
+```
+    Member { string id PK }
+```
+
+is read by **neither** the checker nor the generator: the checker reports
+`EML004 Empty document: no entities` and an `EML120`/`EML121` per relationship,
+and `parseModel` returns zero entities. Worse, in a seed that also carries
+`%%category` and `%%entity … help:` lines — which this one does — the checker
+recovers the entity *names* from those directives and the document then reports
+**zero errors with one `EML102` per entity**, which is indistinguishable from a
+correct seed. This example was written that way for a year and read as passing.
+
+Then **run the fixer and the checker over it** — the first pass of the §10.0
+loop, and the one that proves the file on disk is a real document rather than a
+plan to write one — and record the result in `03-validation.md`. Nothing after
+this point edits the `.mmd` without closing the same way.
+
+**Expect a run of `EML125` notes — "No FK attribute found in X for relationship
+to Y" — and do not act on them.** They are the seed doing its job: every
+relationship is drawn and no foreign key column has been declared yet. Each one
+disappears as its entity is walked in Phase 4, and the count is a free progress
+bar. What matters at this gate is that the document reports **zero errors and
+zero warnings**, which a correctly written seed does. Do not silence the notes by
+inventing fields ahead of the walkthrough — those fields would arrive without help
+text, without the user's sight of them, and in the one phase that exists to avoid
+exactly that.
+
+**`EML102` — "Entity has no attributes" — should *not* appear.** Every entity in
+the seed declares `string id PK`, so any `EML102` means an entity block the
+parser did not read, which in practice means the brace did not end its line. It
+is the one diagnostic at this gate that is a fault rather than a progress bar.
+
+`EML148` (a child with no foreign key back to its parent) is the other
+diagnostic that is expected to be absent now and to appear later: it cannot fire
+while the child has no attributes at all, and it clears the moment the child's
+walkthrough adds the parent foreign key. If it is still there at Gate D, the
+child has quietly left the application (§3.3.1) and that is a real fault.
+
+**Why the skeleton declares every entity at once, rather than growing one at a
+time.** Because a foreign key written during any later walkthrough then always
+points at an entity that is already declared. `EML147` (parent not declared) and
+the undeclared-reference diagnostics cannot fire for *ordering* reasons, so from
+here on every checker run reports a real problem and nothing else. Growing the
+file entity by entity would make the document spend most of the walkthrough in a
+state that is broken for a reason nobody needs to think about.
+
+The document is **valid, renderable Mermaid at every step** — §0's first property
+holds for every intermediate state, not just the final one. A stakeholder can
+open the half-finished file in any Mermaid viewer and see the shape of the model
+being built.
+
+**Point the user at the viewers now, at this gate and not later.** This is the
+first moment there is a document to look at, and every gate after it asks them to
+approve something a Mermaid preview does not draw:
+
+> Open `https://www.appwithai.org/viewers/` and press **Watch a file**, then pick
+> `docs/eml-sessions/<slug>/<slug>.mmd`. The page re-reads it whenever it
+> changes, so the diagram fills in as we go. On a browser without that button,
+> **Open a file** or paste the document instead.
+
+At this phase they will see the boxes and the lines and no columns, which is
+exactly what the seed contains — and it is worth saying so, because an empty
+entity box looks like a fault rather than like the plan. From Phase 4 the boxes
+fill in one at a time, in the order the entities are walked.
+
+**This is the context-loss defence, and it is the reason this phase exists.**
+From here the `.mmd` on disk, not the conversation, *is* the model. A compaction
+between entity 3 and entity 12 costs the scrollback and nothing else. Never
+reconstruct the document at the end from what is still in context — that is the
+failure this protocol was written to remove.
+
+### 10.4 Phase 4 — Walk the entities, one at a time
+
+The loop. Order matters: **parents before children, referenced entities before
+the entities that reference them.** Walking `Booking` before `Member` means
+writing help text for `booking.member_id` before anyone has decided what a member
+is.
+
+**Three passes, and the user starts each one.** The eight sections below are not
+one conversation. They are three, and the reader decides when each begins and how
+wide it goes:
+
+| Pass | What it settles | Sections |
+|---|---|---|
+| **1 · Structure** | what the thing *is*, and what it is attached to | Fields, Enums, Relationships |
+| **2 · Behaviour** | what it *does*, and who may make it do that | Lifecycle, Rules, Hooks, Cross-entity effects, Access |
+| **3 · Reports** | what people will want to *know* about it | `%%report` for the roles that read it (§10.5.1) |
+
+Each pass ends at its own gate, and **none of them opens unprompted**. Ask which
+pass to run next and wait for the answer; do not roll from structure into
+behaviour because structure went well, and do not start writing reports for an
+entity whose rules the user has not yet approved. A pass the user did not ask
+for is work they now have to read and correct.
+
+They also choose the *shape* of the walk, and the two are genuinely different
+jobs rather than a matter of taste:
+
+- **Entity at a time** — all three passes on `Member`, then all three on
+  `Booking`. Best when the domain is unfamiliar, because everything about one
+  thing is decided while it is still in mind.
+- **Pass at a time** — structure for every entity, then behaviour for every
+  entity, then reports for every entity. Best when the reader knows the domain,
+  because the whole shape is visible before any behaviour is written on top of
+  it, and a relationship that was wrong is found before ten rules depend on it.
+
+Ask which they want once, at the start of Phase 4, and say what the trade is.
+Then hold to it — switching halfway leaves some entities two passes deep and
+others none, and nothing in the document records which is which.
+
+**Reports can be written per entity here, or in one pass at the end.** §10.5.1 is
+the same work either way: the same four questions, the same walk of the roles,
+and the same rule that more than one role gets reports. Doing it here keeps a
+report beside the rules it depends on; doing it at the end lets a report cross
+entities that were not walked yet. Neither is wrong, and a model that never
+reaches it is missing a third of what the platform can answer.
+
+For each entity, present a **dossier — filled in, not blank** — and let the user
+edit it. Eight sections, all eight every time:
+
+**1 · Fields.** Every column with its EML type and modifiers. The modifiers are
+`PK` `FK` `UK` `UNIQUE` `OPTIONAL` `NULL` **and nothing else** — anything else is
+dropped silently by the parser (§3.3), so `string email UNQIUE` yields a column
+that simply is not unique and renders identically in the diagram. `EML118` warns
+about it now; do not rely on the warning, spell them correctly.
+
+Each field arrives with **`%%field help:` already written to the §3.2 quality
+bar**: what the field is *for*, naming the business event rather than the data
+type, explaining enum values that carry policy, describing foreign keys in
+business terms. Never a restatement of the field name. "The name of the
+customer" is not help; "Full legal name as it appears on invoicing documents —
+required for tax reporting" is. This text populates the generated manual (§5.6)
+and in-app tooltips — it is not optional filler.
+
+**The dossier is where the domain knowledge is captured, and help is the only
+field that carries it.** Everything else in the dossier is structure — types,
+modifiers, enums, relationships, states, roles — and the user can check
+structure by reading it. They cannot check help by reading it; they can only
+tell you it is wrong, which is exactly what this gate is for. So write each line
+from the research and from what the user has told you in Phases 1 and 2, in their
+own vocabulary, and apply one test before presenting it: **could this sentence
+have been written without knowing anything about this business?** If it could,
+rewrite it before the user sees it. `Household id for HouseholdMember.` could.
+`The family this membership is in — listed inside the household's own screen,
+since a membership away from its household is not something anybody looks up.`
+could not.
+
+The checker reports the three failures here as warnings — `EML151` for a line
+that restates its own name, `EML152` for an entity with no help, `EML153` for
+columns with none — and `EML151` is the one that survives a coverage sweep, so
+read the help back at Gate C rather than counting it. **The primary key needs
+none**: it is a generated uuid and the only sentence available restates it.
+
+
+**Check every column name against the reference convention (§3.3, §5.3) before
+moving on, because a name silently decides a control type.** The generator resolves a
+reference from the column name alone (`foreignKeys` in
+`appwithai-language.json`): a `_by` or `_by_id` suffix resolves to the model's
+person entity, otherwise `<entity>_id` resolves to `bus_<entity>`, and **a name
+that resolves to nothing is stored as a plain string — no lookup, no display
+name, the raw id rendered in every grid and form.** The failure is silent in both
+directions, and all three of these have happened in a real walkthrough:
+
+| Written | Meant | What it did |
+|---|---|---|
+| `verified_by_staff_id FK` | a reference to `Staff` | Resolves to `bus_verified_by_staff`, which does not exist → a raw uuid on every form. `verified_by_id` is the name that works |
+| `head_doctor_id FK` | a reference to `Doctor` | Resolves to `bus_head_doctor` → the same. `doctor_id`, with the word *head* in the help text, is the name that works |
+| `given_by` | an **enum**, not a reference | `EML119`: the `_by` suffix reads as a person reference. Rename the column that is not a reference — `giver_type` |
+
+`EML119` and `EML502` catch some of these and not others: `EML502` fires only
+where the column has no drawn relationship, and a drawn edge gives the *database*
+its constraint without feeding the Application Dictionary, which reads the name.
+So a column can be correctly constrained and still render as a uuid. Read the
+names yourself.
+
+**2 · Enums.** `%%enum` for every coded column, with the values this business
+actually uses — its vocabulary from §10.1.6, not a generic `active/inactive`.
+
+**3 · Relationships.** To entities already walked: cardinality, and which side
+carries the FK. Foreign keys resolve by name (§3.3) — a column ending `_id`
+points at the entity whose snake_case name it carries, and `_by` columns resolve
+to the model's person entity.
+
+**4 · Lifecycle.** The `stateDiagram-v2`, if the entity has a status. §3.5's rule
+is the one to quote at the user: **an entity with a `status` field has a state
+machine whether or not anyone drew it.** Every state, every edge, the event name
+on each edge, and every state backed by the declared `%%enum` (`EML426`/`EML428`
+check this). Draw the edges the business actually has — an edge the diagram never
+drew is refused to *every* caller including the master role, because topology is
+not access (§3.5).
+
+**5 · Rules on this entity.** For each: the inputs it reads, the decision it
+makes, and — the question that decides its whole shape — **does it merely decide,
+or must it also act?**
+
+| | Form | Can act? |
+|---|---|---|
+| Decides only — pricing, scoring, tiering | node-graph `flowchart` | **No.** It carries no outputs; the engine finds no actions (§3.4). |
+| Must act — stamp a field, fail a write, start a workflow, touch a related row | `%%action` decision table | Yes. This is the only form whose rules can act. |
+
+State which form each rule takes **in the dossier**, so the user is never
+promised behaviour the shape cannot deliver. This is the single most common
+source of "my rule decides but nothing happens", and the interactive form's job
+is to surface it while the rule is still a sentence.
+
+**And check what each condition reads.** `ruleNodes.actions.whenForm` says a
+`when:` is *"a zen expression over the record being written"*, and the generated
+`bus.service.ts` means it literally: it calls
+`enforceBusinessRules(tableName, data, action)` where `data` is that record and
+nothing else — no parent row, no count of children, no query. An identifier
+naming anything else is **undefined at evaluation, so the comparison is false and
+the rule never fires**: it is seeded into `sys_business_rules`, it appears in the
+admin screen, the viewer draws it, and it refuses nothing. A safety control that
+looks present and is inert is worse than one that was never written.
+
+This is easy to get wrong because the natural sentence crosses rows — *is the
+bed free*, *has a diagnosis been recorded*, *is this more than the invoice
+owes*. The generated service already implies the fix, in the order it runs:
+`executeBeforeCreateHooks` (or `executeBeforeUpdateHooks`) **and then**
+`enforceBusinessRules`, and on an update the rules see `{ ...current, ...changed }`.
+
+> **A handler resolves; the rule decides and acts.**
+
+So for each condition that names an off-row fact, take one of two routes:
+
+- **Make it a column**, written by a `%%hook` that runs first — but only where
+  the column earns its place in the business. *What the invoice still owed before
+  this payment* belongs on a receipt; *the running balance after this movement*
+  belongs on a stock ledger; *the high-alert flag as it stood when prescribed*
+  belongs on the prescription item, for the same reason the invoice line keeps
+  its own price. A boolean invented purely to satisfy a rule is not this.
+- **Move the whole check into the handler** and delete the action. A rule that
+  cannot fire is not a specification, it is a claim.
+
+Say which route each rule took in the dossier. A rule removed for this reason is
+a change the user approved something else for, so it is theirs to see.
+
+**6 · Hooks.** The `%%hook` lifecycle bindings — 13 types, `beforeCreate`
+through `afterDelete`.
+
+**7 · Cross-entity effects.** Where writing *this* entity must create or update
+*another*. Name each as **trigger → target → create / update / transition**, then
+resolve it into a hook, a rule action, or a saga step. The batch protocol calls
+these "the ones most often missed"; here they get their own dossier section on
+every entity so they cannot be. An order line decrementing stock, an approval
+writing a ledger entry, a cancellation releasing a reserved slot, a payment
+closing an invoice and advancing the order — never left as an assumption.
+
+**8 · Access.** The `%%rbac` lines, and the `read` line is **mandatory**. `read`
+is the one operation that decides whether the entity appears in a role's
+navigation at all (§3.2.1) — an entity a role may not read has no menu entry, no
+dashboard card, no lookup. Every role that may *act* on the entity must be named
+on its `read` line too, or it cannot open the record its transition applies to.
+Do not use `.*` for this: it restricts create/update/delete to the same list, and
+it merges with rather than overrides the narrower rules elsewhere in the document.
+
+#### The moves available every round
+
+Offer them, rather than waiting to be asked:
+
+> add a field · change a field's type, modifier or help · remove a field ·
+> add or edit an enum · add a state or an edge · add or reshape a rule ·
+> add a hook · **relate this entity to another** · split this entity ·
+> merge it with another · defer it and come back
+
+**Relating to an already-approved entity reopens that entity.** A relationship
+added in one direction and silently absent in the other is how a model ends up
+self-inconsistent. When it happens:
+
+1. amend the earlier entity's dossier;
+2. mark it `amended` in `progress.md`, with the reason;
+3. apply the change to the `.mmd`;
+4. **show the user the amendment** — they approved that entity in a different
+   shape, and they are entitled to see it change.
+
+> **Gate C — per entity.** Approving an entity does five things, in this order:
+> 1. write `entities/<Entity>.md`;
+> 2. **merge the entity into the `.mmd`** — its fields, enums, `%%index`,
+>    relationships, its `stateDiagram-v2` section, its rules sections, its hooks
+>    and its `%%rbac` lines;
+> 3. **run the fixer, then the checker, over the whole document** (§10.0);
+> 4. fix what the merge broke and run both again, until the only warnings left
+>    are the seed's `EML102`s for entities not yet walked;
+> 5. record the pass in `03-validation.md` and update `progress.md`.
+>
+> **The next entity does not open until step 4 is true.** Carrying an error
+> forward means the next entity's diagnostics arrive mixed with this one's, and
+> the attribution that makes per-step checking worth doing is gone.
+>
+> A user watching the file (§10.0) sees the entity appear as step 2 lands. Where
+> the entity gained a lifecycle or a rule, say which tab of the viewers to look
+> at — **Workflows** for the state machine, **Business rules** for the decision
+> flow — because those are the two things the dossier describes in prose and the
+> user approves without ever having seen drawn.
+
+Running the fixer and the checker after **every** entity rather than once at the
+end is the other half of the parallel build. A diagnostic is attributed to the
+entity that caused it while the reasoning is still in front of you, instead of
+arriving as one of forty at the end of a long session. `language/composer.ts` is
+the authority on what a complete document looks like — its `emitRuleSection` and
+`emitWorkflowSection` produce the section shapes to match.
+
+### 10.5 Phase 5 — The cross-cutting pass
+
+What no single entity owns, once every entity is in.
+
+**Multi-entity sagas.** Any business flow spanning more than one entity or more
+than one actor, defined end to end as `%%workflow … kind: saga` with `%%step`
+nodes: every step, its order (the flowchart's edges give the running order), the
+entity each step touches, what happens when a step fails, and what compensates a
+step already taken. A flow left at "and then it gets fulfilled" generates an
+application that cannot fulfil anything. **`fields` carries JSON and must be the
+last key on a `%%step` line.**
+
+**The `%%rbac` matrix as a whole.** Every entity named on at least one `read`
+line — a model that declares none leaves every entity visible to every signed-in
+caller. Every role that may act on an entity also on its `read` line. Every role
+named gets one seeded account, so the roster of roles is also the roster of
+demo logins.
+
+**Indexes.** `%%index` on the columns the flows actually filter by — the ones
+that appeared in the lifecycle and saga steps, not a guess.
+
+**The coverage sweep — a hard check, not a review.** Go through it as a
+checklist and fix what it finds:
+
+- [ ] every entity has `%%entity <Name> help:` (`EML152`);
+- [ ] **every column except the primary key** has `%%field <E>.<col> help:` —
+      including `status`, the foreign keys and the enums, including the obvious
+      ones (`EML153`);
+- [ ] **no help line merely restates its own name** (`EML151`). Read them back
+      and ask of each: could this sentence have been written without knowing
+      anything about this business? `Household id for HouseholdMember.` could.
+      This is the check a coverage sweep passes and a reader fails;
+- [ ] every child has a parent and a foreign key back to it (`EML148`), no child
+      is named in a `%%category` (`EML150`), and every `EML149` candidate has
+      been walked and either declared or deliberately left;
+- [ ] every state in every `stateDiagram-v2` is backed by a declared `%%enum`;
+- [ ] every cross-entity effect from every dossier landed somewhere real — a
+      hook, a rule action, or a saga step;
+- [ ] every rule that must act is an `%%action`, not a node-graph;
+- [ ] no directive is being relied on for behaviour its `status` does not
+      support (§3.2 — `%%rule` and `%%trigger` are validated, not compiled);
+- [ ] **every role on the `%%rbac` matrix can do its whole job from the
+      `%%report` directives written for it** (§10.5.1) — walk the role's read-list
+      and the four questions; one report for a role that reads seven entities is
+      a token, not a reporting layer.
+
+The help sweep is the one that gets skipped, because zero diagnostics fire for
+it. **A model that checks clean with no help text is an incomplete delivery**,
+and the manual it generates is a table of dashes.
+
+Two of these lines are faster to check by looking than by reading. The viewers'
+**Workflows** tab marks in red every state no `%%enum` declares — the fourth box
+above — and its **Access** tab prints the roles with the number of entities each
+one can read, which is the `%%rbac` matrix as the generated application will
+seed it. A role reading 0 of 14 entities is a role that signs in to an empty
+application, and that is a Gate D finding rather than something to discover in
+the generated app.
+
+#### 10.5.1 The reporting pass — write the users' questions into the model
+
+Everything above describes what the application *is*. This describes what the
+people using it will want to **know**, and it is written into the same `.mmd`,
+as `%%report` directives.
+
+**Why it belongs in the model at all.** The generated application ships beside a
+reporting platform, and the platform is loaded automatically from the model —
+`common/build/reporting-pack.ts` turns the model into saved queries, reports,
+charts and a dashboard, and the seeder writes them in on every start. It derives
+a baseline from structure alone, with no help from you:
+
+| Derived without being asked | From |
+|---|---|
+| a register per entity — what rows exist, newest first | every entity |
+| a breakdown per enum-bound column, as a pie or a bar | `%%field … enum:` |
+| created-per-month, as a line | every entity |
+| a lifecycle report over the declared states, **in the diagram's order, zeroes included** | `%%workflow … kind: state` |
+| totals and averages over numeric columns, grouped by the primary enum | `decimal` / `integer` columns |
+| children per parent, ranked | every `||--o{` |
+| a dashboard of the most connected entities, one tile each | the relationship graph |
+
+That baseline is complete and shallow. It describes the shape of the data and
+**nothing about the business running on it**. Nothing in an ERD says that a
+dispatcher's first question every morning is which jobs have no engineer
+assigned, or that the finance lead only ever wants invoices past due by more
+than thirty days. Those come from Phase 1 — from the research into how the
+business actually runs — and this is where that research is finally written down
+as something executable.
+
+**More than one role, always.** A reporting layer that serves one role is not a
+reporting layer, it is that person's saved query. Every application has at least
+two kinds of people in it — someone who does the work and someone answerable for
+it — and they never want the same screen: the first wants a filtered list they
+act on row by row, the second wants a comparison across people or months. If the
+`%%rbac` matrix names two roles, both get reports. If it names eleven, all
+eleven do.
+
+The count follows the read-list, not a quota. A role that may read three
+entities lands around three reports; one that runs a whole function lands closer
+to eight. What is not acceptable is a role with a read-list and no reports at
+all: that role signs in, sees its records, and has no way to answer a question
+about them without opening a SQL editor — which is the situation this pass
+exists to end.
+
+**The method: walk the roles, not the tables.** You already have the roster —
+every role named on a `%%rbac` line in the cross-cutting pass, each of which gets
+a seeded account. Take them one at a time and answer, in the user's words:
+
+1. **What is the first thing this person opens the application to find out?**
+   That is a report, almost always a filtered list rather than a count.
+2. **What would make them say "that's wrong, someone needs to fix it today"?**
+   That is an exception report: the empty queue, the unassigned work, the record
+   stuck in a state it should have left, the total that does not reconcile.
+3. **What do they get asked for by someone more senior, once a week?**
+   That is usually a chart — a comparison across people, teams, or months.
+4. **What silently rots if nobody looks?** The stale record, the failed job
+   nobody chased, the source that stopped answering. These are the reports that
+   justify the platform, and they are the ones nobody thinks to ask for.
+
+**Write as many reports as the role actually needs to do its job — there is no
+budget here.** One report per role is not a reporting layer, it is a token. A
+sales rep who can see stalled deals but not their own overdue activities,
+unworked leads or pipeline by stage has to leave the application to do the rest
+of the job, and that is the situation the platform exists to end.
+
+**The test is coverage, and it is a question about a person, not a count:** *can
+this role run their part of the business from the reports they can see, without
+opening a SQL editor?* Work it like this, per role:
+
+1. Read the role's `%%rbac` read-list. That is the set of entities they are
+   allowed to reason about, and every one of them is a candidate — a role with
+   seven readable entities and one report is under-served no matter how good
+   that report is.
+2. Put all four questions above to each of those entities, in the role's own
+   terms. Keep whatever produces a real question that a real person asks.
+3. Keep going until you cannot name another question that role would ask. That
+   is the stopping condition — not a number.
+
+In practice a role with a narrow read-list lands around three reports and one
+that runs a whole function lands closer to eight; the reference CRM carries
+thirty-three across eight roles. Treat those as observations, not a target. Ten
+well-grounded reports for a role that needs ten is right; six invented to reach
+an average is worse than three.
+
+Two things do *not* belong here. A rewrite of the derived baseline — if the
+report you are about to write is "count of X grouped by its enum", the pack
+already has it, so go back to the four questions. And a report for a question
+the role genuinely does not ask: say so and move on.
+
+**What this produces, and how it is opened.** The reports are not a screen inside
+the generated application. They are loaded into the reporting platform that runs
+beside it, and the two are separate applications on one origin: the generated
+application at `/app`, the reporting platform at `/report`. `./start.sh` brings
+both up and prints both URLs.
+
+**Open them in two tabs of the same browser and keep both open.** That is the
+arrangement the reports are written for — a question asked in one tab and
+answered against the records visible in the other, on the same data at the same
+moment. Checking a report by reading its SQL is not the same as seeing it return
+the rows the application is showing next to it, and a report that looks right in
+isolation is regularly wrong about the business the moment the two are compared.
+Both tabs share a session, so signing in once is enough.
+
+Until the seeder finishes, `/report` is up but empty; that is the load, not a
+failure.
+
+**The form.**
+
+```
+%%report <name> title: <Title> [entity: <E>] [chart: bar|line|pie|area x: <col> y: <col>] [help: <why it is asked>] sql: <query>
+```
+
+- `sql:` is **always last and takes the rest of the line**, because a query
+  contains spaces and colons and would otherwise be shredded by the key scan.
+- The query runs against the **generated application's** database, so it names
+  `bus_<table>` tables — `bus_account`, `bus_lead` — with the model's own column
+  names. Every table also carries `id`, `created_at`, `updated_at`, `deleted_at`
+  and `version`, whether or not the ERD lists them.
+- **Filter soft deletes**: `WHERE deleted_at IS NULL`. Omitting it is the single
+  most common way one of these reports quietly overstates a number.
+- A foreign key and a primary key are both `UUID`, in both stacks, so a join is
+  written plainly: `ON c.account_id = p.id`. **Do not cast.** `::text` was
+  needed while the browser stack typed a foreign key as `VARCHAR`; it does not
+  any more, and PostgreSQL has no implicit cast back — a cast that is no longer
+  needed is now the thing that breaks the query.
+- `help:` is the description the report carries on screen. Write it as *why the
+  question is asked and who asks it*, not as a restatement of the SQL. "Every
+  failed run of a standing report, newest first, with the error. A delivery that
+  fails silently is a report somebody is waiting on and will not chase." — that
+  is the shape.
+- `chart:` needs both `x:` and `y:`, naming **result columns of your own query**
+  (its aliases), not table columns. Without `chart:` the report is a table, which
+  is the right default for anything an operator acts on row by row.
+- Only `SELECT` and `WITH`. The checker refuses anything else (`EML293`): these
+  run unattended, on a schedule, against the live application database.
+
+**Worked, from the CRM.** Three of the roughly thirty this model carries — one
+from a sales manager's set, one from a support lead's, one from an operations
+person's. Each role's full set answers all four questions above; these are the
+"what would make them say that's wrong" one in each case, because it is the
+question most often skipped:
+
+```
+%%report stalled-deals title: Deals with no activity in 14 days entity: Opportunity chart: bar x: owner y: deals help: The sales manager's Monday question. A deal nobody has touched in a fortnight is not a forecast, it is a hope. sql: SELECT u.first_name AS owner, COUNT(*) AS deals FROM bus_opportunity o JOIN bus_user u ON u.id = o.owner_id WHERE o.deleted_at IS NULL AND o.stage NOT IN ('closed_won', 'closed_lost') AND o.updated_at < now() - interval '14 days' GROUP BY 1 ORDER BY deals DESC
+
+%%report breaching-cases title: Support cases past first response entity: SupportCase help: What the support lead checks before standup. A case past its first-response target is an SLA breach that is already happening, not one that might. sql: SELECT case_number, subject, priority, created_at FROM bus_support_case WHERE deleted_at IS NULL AND status = 'new' AND created_at < now() - interval '4 hours' ORDER BY created_at
+
+%%report accounts-without-contacts title: Accounts with nobody to call entity: Account help: An account with no contact cannot be sold to or supported. Usually a migration that half-finished, and invisible until someone tries to use it. sql: SELECT a.name AS account, a.account_type FROM bus_account a LEFT JOIN bus_contact c ON c.account_id = a.id AND c.deleted_at IS NULL WHERE a.deleted_at IS NULL GROUP BY a.id, a.name, a.account_type HAVING COUNT(c.id) = 0 ORDER BY a.name
+```
+
+Note what none of them are: none is a count of rows in a table, none restates a
+lifecycle the state machine already gives you for free, and each one names the
+person who asks it.
+
+**Where they land.** Authored reports are listed *ahead* of the derived ones and
+take the top tiles of the dashboard, because a question somebody asked for by
+name outranks one inferred from a foreign key. In the running platform each
+becomes a saved query, a report definition, and — where `chart:` is set — a chart
+definition, all owned by the seeded administrator.
+
+**What you cannot check here, and who does.** The checker validates the shape:
+that a query exists, that it reads rather than writes, that a chart names its
+axes, that the `entity:` is one the model declares, that no name is used twice
+(`EML290`–`EML296`). It has no database, so it cannot tell you a column name is
+wrong. `common/scripts/check-reporting-pack.ts` does: it generates the
+application, applies its migrations to a real PostgreSQL, and executes every
+query in the pack, authored ones included. Run it if you have Docker or a local
+PostgreSQL; otherwise say plainly that the SQL is unverified against a live
+schema.
+
+> **Gate D — cross-cutting approved**, then merged into the `.mmd` and put
+> through the §10.0 loop like any other step: fixer, checker, clean before Phase
+> 6 opens. This is the merge most likely to fail it — sagas, the `%%rbac` matrix,
+> the indexes and the `%%report` queries all reach across entities, so `EML5xx`
+> cross-section codes
+> that could not fire while each entity stood alone fire here for the first time.
+> By now the seed's `EML102`s should all be gone; one that survives names an
+> entity that was never walked.
+
+### 10.6 Phase 6 — Validate to clean
+
+The model is not finished when it is written. It is finished when the checker
+accepts it. By this phase the fixer and the checker have run at the close of
+every step since the seed (§10.0), so this phase is usually short — which is the
+point of having run them all along. A Phase 6 that opens on a long list of
+diagnostics means the per-step loop was skipped somewhere, and the honest repair
+is to say so in `03-validation.md` rather than to work through the list as
+though it were expected.
+
+#### The tools
+
+**One engine, published four ways.** `language/checker.ts` in this repository,
+`https://www.appwithai.org/guide/checker.js` on the web, the copy chapter 11 runs
+inside a browser tab, and the copy inside `website/viewers/eml-model.js` that
+the viewers report their verdict from are the same checker, built from the same
+source by `bun run build:language-tools` and `bun run build:viewers`, with CI
+asserting they stay in step. None of them is the official one and the rest
+approximations: the counts agree, or the build is broken. Whichever you reach,
+the result is a real checker result and may be reported as one.
+
+**A checkout is not required, and neither is Bun.** The CLI below is the
+convenient path when the repository is already on disk; it is not the
+authoritative path, and nothing downstream distinguishes a verdict that came
+from it. In particular — and this has been observed in the wild — **failing to
+reach GitHub says nothing about whether the checker can run.** No clone, no
+credentials, no network route to github.com: the modules are served from
+`https://www.appwithai.org`, and `check-model.mjs` resolves them from `--base`, then from
+its own directory, then from the published site. GitHub is not in that path at
+any point. "I could not obtain the repository, therefore I could not validate"
+is a wrong inference, not an honest limitation.
+
+**Write the URL in full, every time: `https://www.appwithai.org/…`.** Scheme
+included, `www.` included, never a bare host. Three things go wrong otherwise and
+all three have been observed:
+
+- **A bare host is not a URL.** `appwithai.org/guide/checker.js` is a string a
+  runtime either refuses or has to guess a scheme for, and a sandboxed agent's
+  HTTP client usually refuses.
+- **A Markdown link around a bare host is worse**, because it looks right.
+  `[www.appwithai.org](https://www.appwithai.org)` reads to a person as a working
+  link and to anything parsing your output as the bare host. Write the plain
+  absolute URL: this is a specification, not a web page, and nothing here is
+  rendered.
+- **The apex is not the canonical form.** `https://appwithai.org/…` serves the
+  same files, but `https://www.appwithai.org/…` is canonical, and an environment
+  that resolves one and not the other is common enough never to rely on.
+
+**The same rule governs how you report a failure.** Name the exact request and
+the exact error. *"Validator retrieval failed for appwithai.org"* says neither
+what was requested nor what happened; *"GET
+https://www.appwithai.org/guide/checker.js failed: EAI_AGAIN (DNS)"* says both,
+and is the difference between a reader who can reproduce your problem and one who
+cannot. Report the URL you actually requested — not a shortened, prettified or
+linked version of it.
+
+**Classify the failure by its exit code before you describe it.** These mean
+different things, and only one of them is about the site at all:
+
+| What you see | What it is | What it tells you |
+|---|---|---|
+| `curl: (6)` · `EAI_AGAIN` · `ENOTFOUND` | The host did not resolve | **There is no working DNS here.** Nothing was sent. Resolve any other host to confirm — if that fails too, the resolver is the finding, and it is not about this hostname |
+| `curl: (7)` · `ECONNREFUSED` | Resolved, nothing accepted the connection | Egress is blocked at the network layer. Nothing was sent |
+| `curl: (56)` with `403` or `407` | A proxy refused the CONNECT | Your gateway answered, in the site's place. Nothing was sent |
+| `403` · `407` · `502` with a body | An HTTP answer that is not the site's | Same: an egress proxy or corporate gateway replying for it |
+| `404` from this host | The site answered, and that path is wrong | The only one of these that is a fact about the site. Re-read the URL |
+
+The first four never reached the site, so none of them is evidence it is down,
+and none is a verdict on the model. Say which one you got, verbatim, and then
+take the local-first path: put `checker.js` and `fixer.js` on disk and name
+their directory with `--base <dir>`. That is a real run, with real counts.
+
+**And if your fetch layer reads pages but refuses `application/javascript`**,
+the modules are published inside pages too — `https://www.appwithai.org/guide/source/`
+links one page per file, each carrying that file base64-encoded with its
+SHA-256. Read the page, strip whitespace, `base64 -d`, check the hash, then
+`--base <dir>` as above. That layer reports the module as inaccessible while
+the same host serves it pages without complaint, which reads as the site being
+broken; it is a content-type refusal in your own client. Base64 rather than
+escaped source because it survives a reflow or a Markdown conversion, and
+because a corrupted copy then fails the hash instead of quietly becoming a
+checker that is not this one.
+
+**What a diagnostic gives you back.** Every diagnostic that can be placed
+carries three things, and the report prints all three:
+
+```
+error:18 [EML144] %%field "Order.status" references undeclared enum "MissingEnum".
+  18 │ %%field Order.status enum: MissingEnum
+     └ fix: Add  %%enum MissingEnum: value1, value2  before the erDiagram block.
+```
+
+the code and the line; the **text of that line, as the checker read it**; and the
+repair. Match your edit against the text rather than against the number. If the
+line in your copy does not look like the one printed, you are editing a different
+document from the one that was checked — which is the commonest way a fix gets
+reported as applied when it never was. Structured callers get the same thing as
+`issue.lineText` beside `issue.line`.
+
+A diagnostic with no line says so — *no single line — this is about the document
+as a whole*. `EML001`, a missing `%%meta name:`, is one: it is about the document,
+not about any line in it.
+
+**Line numbers always belong to the document that was checked.** `checkAndFix`
+repairs first and re-checks after, so every number in `remaining` indexes
+`report.source` — the repaired text — and not the string you passed in. Inserting
+`%%meta name:` moves every line below it down by one, so resolving those numbers
+against your own copy reads one line too high, all the way down, and without any
+sign that it has. Re-read the file from `report.source`, or re-check after
+writing it, before you act on a line number.
+
+**The report ends with the steps for this run**, worked out from these
+diagnostics rather than stated in general: which of them repair themselves and so
+should not be hand-edited, which line to start at, and the reminder that the
+whole file is re-checked from zero after every round. The verdict stays the final
+line, so the last thing you read is still the outcome.
+
+**The same mistake generalises, and it has now been made three ways.** Not
+reaching GitHub, not reaching `llmdetailed.txt` itself, and Node refusing a URL
+import are each one address or one call failing. None of them is a statement
+about `guide/checker.js`, which is a different file on a different host — and
+`check-model.mjs` needs no specification document at all: it reads the model and
+nothing else. Whatever you could not fetch, walk the ladder before reporting the
+checker as unavailable. Re-reading this text is not a precondition for running
+the engine it describes.
+
+**The checker is not the whole of validation, and two of its blind spots have
+bitten.** It validates the document; it does not ask whether the document's parts
+can perform each other. Two checks belong in this phase, and both are a dozen
+lines against the same `ViewModel` the viewers draw from
+(`https://www.appwithai.org/viewers/eml-model.js`, whose `readModel` is the
+generator's own reader):
+
+1. **Every state a saga writes must be a state its machine draws.** A
+   `%%step UpdateEntity` that writes a status with no edge from where the record
+   stands is refused by the generated entity-access guard with a 403 — the rule
+   fires, the write is rejected, and the record it was meant to move sits still.
+   In one walkthrough this found two missing edges: a `consented → planned` the
+   diagram never drew, so withdrawing consent could not take the procedure back;
+   and a `part_paid → part_paid` self-transition, so a *second* partial payment
+   was refused.
+2. **Every identifier a `when:` reads must be a column of the rule's own
+   entity** — see §10.4's rules section for why, and for the repair. Run it over
+   the model, and again over `backend/seeds/04_business_rules.ts` if an
+   application has been generated: the seeded decision tables are what the engine
+   will actually evaluate.
+
+**Run the scorer as well as the checker** —
+`curl -sO https://www.appwithai.org/guide/audit-model.mjs` then
+`node audit-model.mjs <file>`, published beside the two modules and needing no
+checkout. It audits the file contract and §10's checklist mechanically, and the
+two tools disagree about a whole class of fault: a column named
+`national_health_id` carries a reference suffix and refers to nothing, which the
+checker cannot report because no `NationalHealth` entity exists to resolve
+against, and which the scorer fails. A model can be 0 errors, 0 warnings and
+still be wrong in a way that reaches every form in the generated application.
+
+This paragraph used to name `scripts/check-model.mjs` in the website
+repository, which is worth recording because it made the instruction
+unfollowable: the reader of this document is a language model with a shell and
+no clone of that repository, and the fault above is exactly the one it
+delivers. The audit is a published runner now, resolved the same way as the
+checker and carried in the one-file build beside it.
+
+**Generate the application if you can.** Phase 6 is where an assumption carried
+through the whole walkthrough gets tested against what the generator writes
+rather than against what the model says. Reading
+`backend/src/modules/hooks/handlers/` tells you the declared hooks are real
+modules; reading `backend/seeds/04_business_rules.ts` tells you what each rule
+will be evaluated against; reading `bus.service.ts` tells you in what order.
+
+**Perform the validation; do not offer it.** "If you want the actual checker
+counts, I can run the published checker" hands the user a choice they were never
+given: the run is required, so the counts are part of the deliverable rather
+than an upgrade to it. A model that proposes the mandatory step instead of
+taking it has skipped it — and the offer reads as diligence, which is what makes
+it hard to catch.
+
+With a checkout, use the CLI — it is the same engine the generator runs:
+
+```bash
+bun language/checker.ts docs/eml-sessions/<slug>/<slug>.mmd --json
+#   exit 0  no errors (warnings allowed unless --strict)
+#   exit 1  one or more errors
+#   exit 2  bad invocation / file not found
+
+bun language/fixer.ts docs/eml-sessions/<slug>/<slug>.mmd
+#   derives the .error file name, applies the auto-fixes, re-checks
+#   --dry-run shows what it would change without writing
+```
+
+Without a checkout, the same two engines are published as ES modules, and a
+runner that drives both is published beside them. **On a shell this is the whole
+step** — no checkout, nothing installed:
+
+```sh
+curl -sO https://www.appwithai.org/guide/check-model.mjs
+node check-model.mjs docs/eml-sessions/<slug>/<slug>.mmd
+#   exit 0  clean
+#   exit 1  one or more errors — the generator would refuse it
+#   exit 2  it could not run at all
+```
+
+`check-model.mjs` performs the three passes below against the published modules
+and prints the checker's own report. It is a runner, not a second checker: every
+diagnostic it prints comes from `checker.js`. `--write` saves the repairs back
+over the input; `--base <url>` points it at another host.
+
+**A clean report is not a finished model, and there is a second runner for
+that.** Nothing in the checker requires a model to *have* anything: one entity
+with a primary key and a name is a valid EML document with no lifecycle, no
+rule, no access control and not one word of help text — zero errors, zero
+warnings, and `formatReport` ends the run with *the generator accepts this
+model*, which is true and is not the same as *this model is done*.
+
+```sh
+curl -sO https://www.appwithai.org/guide/audit-model.mjs
+node audit-model.mjs docs/eml-sessions/<slug>/<slug>.mmd
+#   exit 0  every check passed · exit 1  one or more failed · exit 2  it could not run
+```
+
+It scores the file contract and the delivery checklist mechanically —
+twenty-two checks, last line `22 passed, 0 failed`: a primary key per entity,
+the `FK` modifier on every `_id`/`_by` column, an enum binding behind every
+status, a `kind: state` workflow with an initial transition and a terminal
+state, `%%action`, `%%hook`, `kind: saga` and `%%rbac` all present, help on
+every entity and every column that is not a restatement of its own name, every
+declared line item out of every `%%category`, and the three checker passes over
+the file's own bytes. `--quiet` prints the score alone; `--base <dir-or-url>` is
+the same flag, so the offline rungs below apply to it unchanged.
+
+**It is a scorer, not a second checker** — every diagnostic it reads comes from
+`checker.js`, and it adds no codes of its own. Run both, and report both: a
+delivery that says *0 errors, 0 warnings* and nothing else is not wrong and is
+not the whole truth about the file.
+
+| File | URL | What it is |
+|---|---|---|
+| `html/checker.js` | `https://www.appwithai.org/guide/checker.js` | every diagnostic the CLI prints, as `check(source)` |
+| `html/fixer.js` | `https://www.appwithai.org/guide/fixer.js` | the auto-repairs, plus `checkAndFix(source)` — repair and re-check in one call |
+
+They are bundled from `language/checker.ts` and `language/fixer.ts` by
+`scripts/build-language-tools.ts`, and CI asserts they are current — so a
+document that passes there is a document `appwithai` will accept.
+
+**Loading them is one line on some runtimes and four on others, and that
+difference is where this step gets skipped.** Find your row before concluding
+the checker is out of reach:
+
+| What you have | What to do |
+|---|---|
+| A checkout | `bun language/checker.ts <file>` — above |
+| A shell with Node 18+, Bun or Deno | `curl -sO …/check-model.mjs`, then `node check-model.mjs <file>` |
+| Bun or Deno, writing the code yourself | `import { check } from "https://www.appwithai.org/guide/checker.js"` — a URL import works as it stands |
+| Node, writing the code yourself | Node has no network imports: `fetch` both files into one directory and `import()` them from there |
+| A browser, a canvas, an HTML preview | `<script type="module">` with the same URL import |
+| A shell that reaches no host, and a text-only way in | **One file**, `https://www.appwithai.org/guide/check-model-standalone.mjs` (~140KB), carrying both modules and **both** runners compressed inside it. Paste it in and `node check-model-standalone.mjs <file>`, then the same with `--audit` for the checklist score. It runs the published runner against the inflated modules — a real run, counts reportable |
+| A browse or fetch tool beside a shell with no network | The split most assistants have, and a **bridge, not a blocker**: read the two modules with the layer that can reach them, write them into the shell's working directory, then take the Node row above with `--base .`. The shell needs no network — only a file write |
+| None of these | "If the checker cannot be run here", below — check by hand, and say so |
+
+The Node row is the one that catches people out. A URL import there fails while
+the module is being resolved, before any request leaves the machine —
+`ERR_UNSUPPORTED_ESM_URL_SCHEME`, which reads like the modules being unreachable
+rather than like the runtime declining that form of the call. A runtime that
+declines one form of the call is not a runtime without a checker.
+`check-model.mjs` exists for exactly that row.
+
+**Retry down the ladder before you conclude anything.** One failed attempt is
+not a finding about the environment; it is a finding about that attempt. Work
+these in order, and stop at the first that runs:
+
+1. `bun language/checker.ts <file>` — if the repository happens to be on disk.
+2. `curl -sO https://www.appwithai.org/guide/check-model.mjs` then
+   `node check-model.mjs <file>` — no checkout, no Bun, one dependency-free
+   file. This is the one that answers "I could not clone the repository".
+3. `fetch` `checker.js` and `fixer.js` into one directory and `import()` them
+   from there — when `curl` is missing but the runtime can make a request.
+4. **The website.** Open `https://www.appwithai.org/guide/11-check-a-model.html`,
+   paste the document, read the verdict line. It runs these same modules in the
+   tab with nothing installed, so if you can drive or render a browser at all,
+   this is a real run and its counts are reportable as such. A surface with no
+   shell is not thereby a surface with no checker.
+   `https://www.appwithai.org/viewers/` answers the same question the same way — it
+   carries the same checker and prints the same verdict — and draws the model
+   besides, so it is the better rung when the user is present.
+5. **One file, when nothing in the shell can fetch and the only way in is
+   text.** `https://www.appwithai.org/guide/check-model-standalone.mjs` is about
+   130KB and carries `checker.js`, `fixer.js` and the runner compressed inside
+   it. Paste it in, then `node check-model-standalone.mjs <file>`. It inflates
+   them into a temp directory and runs the published runner against them, so
+   the three passes, the diagnostics and the exit codes are the real ones and
+   the counts are reportable. Prefer the three separate files whenever anything
+   can fetch — they are smaller apart than this is together.
+6. **A layer that reaches beside a shell that does not.** The commonest split
+   in a tool-using assistant: a browse or fetch tool that can read
+   `https://www.appwithai.org/guide/checker.js` and
+   `https://www.appwithai.org/guide/fixer.js`, and a sandboxed shell that cannot
+   resolve the host. Both halves of the job are present — one side reads, the
+   other writes a file and runs Node — so read the two modules with the side
+   that reaches, write them where the side that runs will find them (a heredoc
+   is enough; a file too large for one write goes in pieces), then
+   `node check-model.mjs <file> --base .`. The shell needs no network at all,
+   only a file write. Reporting "my web layer can read it but my shell cannot"
+   describes the transport rather than the checker, and stops one capability
+   short of a result the two together can produce.
+7. Only now, the manual review below.
+
+Record which rung answered in `03-validation.md`. A step is only unvalidated
+once every rung has actually been tried and failed — not once the first one did.
+
+**Two things about the checker that bite if you do not know them:**
+
+- **It always writes `<file>.mmd.error` beside the model**, on every run, clean
+  or not. Inside the session directory that is exactly where you want it — it is
+  the fixer's input. Do not hand it over as part of the deliverable, and if you
+  ever run the checker over a file in `language/examples/`, revert the `.error`
+  it leaves behind unless the verdict actually changed.
+- **Eight codes are auto-fixable**, not five:
+
+| Code | What the fixer does |
+|---|---|
+| `EML001` | missing `%%meta name` → insert one, derived |
+| `EML103` | a column the generator adds anyway → delete the line |
+| `EML112` | duplicate attribute → delete the later line, keeping the stronger constraints |
+| `EML114` | FK not ending `_id` → append the suffix |
+| `EML117` | no primary key → add `string id PK` |
+| `EML287` | a `%%action when:` written in camelCase → rewrite it as the snake_case column |
+| `EML421` | no initial transition → add `[*] --> <firstState>` |
+| `EML422` | no terminal state → add `<lastState> --> [*]` |
+
+  (The authority is `AUTO_FIXABLE_CODES` in `language/checker.ts`, mirrored by
+  the fixer's dispatch table and `diagnostics.autoFixable` in
+  `language/appwithai-language.json`. If those three ever disagree, the checker
+  wins.)
+
+#### The escalation rule — what the interactive form adds
+
+Sort **every** diagnostic into one of three buckets *before* editing anything.
+The third bucket is the whole reason this protocol is interactive:
+
+| Bucket | Examples | What to do |
+|---|---|---|
+| **Auto-fixable** | the seven codes above | Run the fixer. Re-check. |
+| **Mechanical** | a dropped modifier (`EML118`), an unknown type falling back to `string` (`EML115`), a missing help line | Fix it, and record it in `03-validation.md`. No need to ask. |
+| **Needs the user** | a state with no enum value behind it (`EML426`/`EML428`) · a rule that decides but cannot act · an `EML214` target that is neither an operation nor a transition · a child with no foreign key home (`EML148`) · a relationship whose cardinality contradicts the research | **Ask.** Two plausible repairs mean two different businesses. |
+
+That last row is the one batch modelling gets wrong. `EML426` can be repaired by
+adding the state to the enum *or* by removing the edge from the diagram, and
+those are different applications — one where a booking can be reinstated and one
+where it cannot. Guessing is how a document comes out clean and wrong, which is
+worse than coming out dirty and honest.
+
+#### The loop
+
+Read each diagnostic properly: it carries a `code`, a `line` and a `hint`, and
+the codes are banded so the band tells you where the fault is —
+
+`EML0xx` document · `EML1xx` entities · `EML2xx` directive-declared hooks, rules
+and workflows · `EML3xx` rule flowcharts · `EML4xx` workflow sections ·
+`EML5xx` cross-section consistency.
+
+**Iterate until clean — at least 10 cycles.** Run the checker, apply the fixer
+to every diagnostic, re-run the checker. Repeat this cycle **at least 10 times**
+or until the checker reports zero errors and zero warnings — whichever comes
+first. If all diagnostics are resolved before 10 cycles, the loop stops. A
+single pass is never enough — a repair can uncover a problem the original error
+was masking, and the fixer may introduce new issues or unmask errors hidden
+behind earlier ones. Fix the complete file across all iterations, not just the
+first batch of diagnostics. Validation is complete only when the checker's output
+is empty.
+
+If diagnostics persist after all 10 iterations, deliver the best version you
+have, say plainly which diagnostics remain and what you tried, and let the user
+decide.
+
+**Warnings are not noise** (§3.6). Most describe something the generator accepts
+and quietly gets wrong — a dropped modifier, a state no enum backs, a rule that
+can decide but cannot act. Clear them, or say in writing why each survivor was
+left.
+
+Log every pass to `03-validation.md`: the counts, what was fixed, what was
+escalated and what the user decided.
+
+#### If the checker cannot be run here
+
+Some surfaces have no shell, no network and no JavaScript engine. That changes
+**what you may claim, not what you deliver**. It is not grounds for stalling at
+Gate E, and it is not grounds for running a check of your own devising and
+reporting its output where a checker result belongs — a substitute described in
+the vocabulary of the real thing ("passes", "errors", "0 warnings") is worse
+than no check at all, because the user cannot tell the two apart.
+
+**Reach this subsection by exhausting the ladder above, not by inferring it.**
+Every observed case of "the checker could not be run" has in fact been one rung
+failing: a repository that would not clone, or a URL import Node declines. Those
+are rungs 1 and 3. Rungs 2 and 4 were available and untried.
+
+Do three things, in this order.
+
+**1 · Walk this table by hand**, against the file's actual bytes rather than
+against the dossiers it came from. It is the mechanical half of what `check()`
+does — the faults a careful reader slides past — and each row names the
+diagnostic it prevents, so a report the user gets later is traceable to a line
+you did or did not check.
+
+| Read your file and confirm | Code it prevents |
+|---|---|
+| There is an `erDiagram` with at least one entity block | `EML004` |
+| `%%meta name:` is present | `EML001` |
+| Every entity declares exactly one `PK` | `EML117` |
+| Every foreign key column ends `_id` | `EML114` |
+| Every foreign key's prefix resolves to a declared entity **by name** — `purchase_order_line_id` finds `PurchaseOrderLine`, and finds nothing if the entity is called `POLine` | `EML502` |
+| Every foreign key has a matching relationship line | `EML502` |
+| Every modifier is one of `PK` `FK` `UK` `UNIQUE` `OPTIONAL` `NULL` (§3.3) | `EML118` |
+| Every type appears in the §3.3 table | `EML115` |
+| Every `%%field … enum:` names a declared `%%enum` | `EML501` |
+| Every state machine has `[*] --> <first>` and `<last> --> [*]` | `EML421` `EML422` |
+| Every state is a value of the enum bound to that status column | `EML426` `EML428` |
+| Every `%%rbac` / `%%rule` / `%%workflow` / `%%hook` / `%%step` names a declared entity | `EML213` `EML251` `EML242` `EML202` `EML266` |
+| Every `%%rbac` target is a CRUD operation or a transition that machine declares | `EML214` |
+| Every `kind: saga` marked `trigger: rule` is named by some `%%action` | `EML286` |
+| Every `%%rule` is bound with `on <Entity> event: <hookType>` | `EML506` |
+| `fields:` is the last key on its `%%step` line | — |
+
+**2 · Record it in `03-validation.md` as what it is** — a manual review, its
+date, the rows checked and what they found. Not as a pass count, not under a
+heading that reads like checker output, and never as "three clean passes": that
+phrase means three runs of the published engine over unchanged bytes, and
+nothing else earns it.
+
+**3 · Say one plain sentence at delivery** (§10.7): the checker could not be run
+here, this is what was verified by hand, and the user can validate the file in
+their own browser in a few seconds at
+`https://www.appwithai.org/guide/11-check-a-model.html`, which runs these same two
+modules with nothing to install.
+
+An unvalidated `.mmd` handed over with that sentence is still the deliverable.
+A hedge in place of one never is.
+
+> **Gate E — validation.** If errors survive three genuine correction attempts,
+> stop. Deliver the best version, say plainly which diagnostics remain and what
+> was tried, and let the user decide. Silently shipping a model that fails
+> validation is the one outcome worse than not finishing.
+>
+> If the checker could not be run at all, Gate E is the manual review above and
+> the sentence that goes with it — not a pause, and not a pass. The phase still
+> ends with a file in the user's hands.
+
+### 10.7 Phase 7 — Deliver
+
+**Run §10.6's loop one last time, over the exact bytes you are about to hand
+over.** Editing stops; validation starts again from zero. Check, fix every
+diagnostic, check again — repeat until the report is empty, for as many cycles
+as it takes up to 10. The file that leaves your hands must be the one that came
+out of a checker run reporting **0 errors**: not an earlier draft, not the copy
+that passed Gate E before the last correction, not "clean three edits ago".
+Phase 6 gets the model right; this run proves the delivered bytes are the
+corrected ones. Log it to `03-validation.md` like any other pass. Deliver only
+when that last run is clean, or say plainly which diagnostics survived 10
+cycles.
+
+**Say how to run it, and that it runs as two applications.** A model with a
+reporting pass produces two things, not one: the generated application and the
+reporting platform loaded from the same `.mmd`. `./start.sh <model>.mmd` brings
+both up on one origin and prints both URLs — the application at `/app`, the
+reports at `/report`.
+
+**Tell the user to open them in two tabs of the same browser**, side by side, and
+to sign in once — the session is shared. That pairing is the point of the
+reporting pass: a question answered in one tab against the records visible in the
+other, on the same data at the same moment. A reader who only ever opens `/app`
+has the reports and does not know it, and a reader who only opens `/report` is
+reading numbers with nothing to check them against.
+
+Two things to say plainly rather than let them be discovered. `/report` is up but
+**empty until the seeder finishes** on a first start — that is the load, not a
+failure. And the browser-only route (the WebAssembly build that runs an
+application in a tab with no server) carries **the generated application alone**:
+the reporting platform is a separate application with its own database and has no
+browser build, so a model's reports are not visible on that route. Reports need
+the `./start.sh` route, and a reader told otherwise will go looking for a tab
+that does not exist.
+
+Hand back `<business-slug>.mmd` as a **file**, not a fenced block the user has to
+copy out of a chat log. Alongside it:
+
+- **the research document** (`00-research.md`), so the user can see what was
+  inferred and correct anything that was guessed wrong;
+- **the entity dossiers**, which together are the specification the model was
+  built from;
+- **the final checker result** — errors, warnings and infos, with counts; or,
+  where §10.6 could not run it, the plain statement that it was not run, what
+  was verified by hand, and where the user can run it themselves;
+- **everything assumed**, and anything still unresolved;
+- **the completion mode** from §10.0;
+- **where to look at it** — `https://www.appwithai.org/viewers/`, which draws the
+  delivered file: the entities and their links, each lifecycle's legal moves,
+  each rule's branches and each saga's steps, and the roles with what each one
+  can see. A user handed a `.mmd` and a prose summary has to take the summary on
+  trust; a user who can open the model is one who can disagree with it.
+
+The user should be able to take that one file straight to `appwithai generate`.
+
+### 10.8 Reference material for the walkthrough
+
+The lookup tables Phase 4 depends on. They are here so a model is not
+improvising them fresh in every session.
+
+#### Entity archetypes
+
+Most entities are one of six shapes, and the shape predicts most of the dossier:
+
+| Archetype | Examples | Typically a child? | State machine? | Fields it almost always needs |
+|---|---|---|---|---|
+| **Party** | Customer, Member, Instructor, Supplier | No | Sometimes (onboarding, suspension) | name, contact, `is_active`, tier/type FK, created_at |
+| **Artefact** | Order, Invoice, Claim, Booking | No | **Almost always** | reference/number UK, owner FK, status, dated fields, money |
+| **Line item** | OrderLine, InvoiceLine, PrescriptionItem | **Yes** — `parent:` | Rarely | parent FK, product/service FK, quantity, unit price, line total |
+| **Event / transaction** | Payment, StockMovement, AuditEntry, Attendance | Sometimes | Rarely — they are already terminal | occurred_at, actor FK, subject FK, amount/quantity, reason |
+| **Reference / lookup** | Room, Tier, ReasonCode, TaxRate | No | No | code UK, label, `is_active`, effective dates if it varies over time |
+| **Ledger / balance** | AccountBalance, CreditWallet | No | No | owner FK, balance, as_of, last_movement FK |
+
+The useful reading: an **artefact** without a state machine is nearly always an
+oversight, and a **line item** without `parent:` is nearly always a bug — which
+is what `EML149` is for: it names the candidates it can see, and leaves the
+decision to you.
+
+#### Question banks
+
+Ask these during the dossier, before showing the finished version:
+
+**Anything with a status** — What starts it? What are the terminal states, and is
+there more than one (completed *and* cancelled)? Which moves are reversible? Who
+performs each move? Is there a move that is allowed only within a time window?
+Is any state reachable from more than one predecessor?
+
+**Anything with money** — Which currency, and is it ever more than one? Gross or
+net, and where does tax sit? Is the amount ever changed after the record is
+created, and if so what records that it was? Is there a discount, and is it a
+rate or an amount? What rounds it?
+
+**Anything about a person** — What identifies them uniquely, and is it stable?
+Are they a user of the system as well as a subject of it? What happens when they
+leave — deleted, deactivated, or retained for history? Any consent or retention
+rule attached?
+
+**Anything dated** — Is it a date or a datetime, and whose timezone? Is it when
+something *happened* or when it was *recorded* — and does the business ever need
+both? Can it be in the future? What is it compared against by a rule?
+
+**Anything soft-deleted or archived** — What makes a record inactive rather than
+gone? Does it still show in lookups? Does a rule need to exclude it?
+
+**Anything referencing another entity** — Can it be null, and what does null
+mean? Can it change after creation, and does changing it need approval? Does
+deleting the target orphan this row?
+
+#### Help-text patterns
+
+The §5.6 standard, as fill-in patterns. In every pair, the second is the one that
+tells a reader something they did not already know from the field name.
+
+| Field kind | ✗ | ✓ |
+|---|---|---|
+| Enum | `The status of the order.` | `draft — editable; confirmed — locked for fulfilment; shipped — triggers customer notification; cancelled — terminates the order.` |
+| Foreign key | `The account id.` | `The company being billed. Must be an approved account; changing it after dispatch requires manager approval.` |
+| Money | `The total amount.` | `Net of discount, excluding tax. Recalculated whenever a line changes; the pricing rule reads this to decide the payment-terms band.` |
+| Timestamp | `The date.` | `The date a signed copy was received from the counterparty. The retention clock starts here.` |
+| Score / derived | `The lead score.` | `0–100, set by the scoring rule on create. Anything over 70 routes to a salesperson; under 30 goes to the nurture list.` |
+| Free text | `Notes.` | `Why the cancellation was allowed outside the 12-hour window. Read by the monthly exceptions report; required when the fee is waived.` |
+| Boolean | `Whether it is active.` | `Cleared when a member's last pack expires. Inactive members keep their booking history but cannot be added to a session.` |
+
+Four rules underneath all of them:
+
+- **Do not restate the field name.** "The customer email address" adds nothing to
+  a field called `email`.
+- **Name the business event, not the data type.** "A date" is useless.
+- **Explain enum values inline when they carry policy.**
+- **Mention the rules attached to the field.** If a workflow fires when a status
+  becomes `approved`, say so — the manual is the only place that connection is
+  ever explained in plain language.
+
+Both consumers read the same string: the form prints it as hint text beneath the
+control, and the manual prints it in the Purpose column. Writing it once covers
+both — and not writing it leaves a dash in one place and an unexplained control
+in the other.
+
+#### A worked dossier
+
+The standard the prose is asking for, for one entity of the CRM in §9:
+
+````markdown
+# Lead  ·  standalone  ·  category: Sales
+
+**Role.** A prospective customer contact captured from marketing, events or
+direct outreach. Becomes an opportunity once a sales representative qualifies it.
+
+## Fields
+| Column | Type | Modifiers | help: |
+|---|---|---|---|
+| id | string | PK | — (generator-supplied) |
+| email | string | UK | The address all nurture and follow-up mail goes to. Unique: a second capture of the same address updates the existing lead rather than creating a rival one. |
+| company_name | string | | The organisation the lead represents, as they gave it. Copied to the Account when the lead converts, so a tidy value here saves an edit later. |
+| campaign_id | string | FK | The marketing campaign that produced this lead. Drives attribution reporting; blank for leads entered by hand. |
+| status | string | | new — untouched; working — a rep has made contact; qualified — passed the scoring gate and ready to convert; converted — an Account exists; disqualified — terminal, kept for attribution. |
+| score | decimal | | 0–100, set by the scoring rule on create and update. Over 70 routes to a salesperson; the conversion saga refuses to run below 50. |
+| owner_id | string | FK OPTIONAL | The sales representative responsible. Unassigned leads appear on the team queue; assignment is what takes them off it. |
+
+## Enums
+`%%enum LeadStatus: new, working, qualified, converted, disqualified`
+
+## Relationships
+- `Campaign ||--o{ Lead : "generates"` — FK on Lead.
+- `User ||--o{ Lead : "owns"` — FK on Lead, optional.
+
+## Lifecycle  (kind: state)
+| From | To | Event |
+|---|---|---|
+| [*] | new | — |
+| new | working | engage |
+| working | qualified | qualify |
+| working | disqualified | disqualify |
+| qualified | converted | convert |
+| converted | [*] | — |
+
+No edge returns from `disqualified`: re-engaging a dead lead creates a new one,
+which is what keeps attribution honest. **Confirmed with the user.**
+
+## Rules
+| Rule | Reads | Decides | Acts? | Form |
+|---|---|---|---|---|
+| leadScoring | score inputs | the 0–100 score | **stamps `score`** | `%%action` decision table — it must write a field |
+| conversionGate | score, status | whether convert may run | **starts LeadConversion** | `%%action … trigger-workflow` |
+
+## Hooks
+`%%hook beforeCreate normaliseEmail on Lead`
+
+## Cross-entity effects
+| Trigger | Target | Effect | Resolved as |
+|---|---|---|---|
+| status → qualified | Account | create | saga step `CreateEntity` |
+| status → qualified | Contact | create, linked to the new Account | saga step `CreateEntity` |
+| account created | Account.tier | update from the scored tier | saga step `UpdateEntity targetSource:` |
+
+## Access
+```
+%%rbac role:sales_rep|sales_manager|marketing_manager on Lead.read
+%%rbac role:sales_rep|sales_manager on Lead.update
+%%rbac role:sales_manager on Lead.convert
+```
+
+## Open questions
+None. Approved 2026-03-11.
+````
+
+Notice what the dossier settles that a schema never would: that `disqualified` is
+terminal *and why*, that both rules must act and therefore both are `%%action`
+rather than node-graphs, and that qualifying a lead writes two rows in other
+tables. All three are decisions a batch pass would have made silently.
+
+---
+
+## 11. Rules for answering questions about this system
+
+1. **Resolve which application** — the modelling tool (:3000), the generated app
+   (:4000/4001), or the reporting platform (:4050)? Most ambiguity in questions
+   about "the app" is this. If the question names reports, charts, dashboards,
+   data sources, NL query, saved queries or scheduled jobs, it is the reporting
+   platform and the answer is in `llms-reporting.txt`, not here.
+2. **Check a directive's `status` before promising behaviour.** `%%rule` and
+   `%%trigger` are validated but not compiled — they will not change a
+   generated application. `%%entity` is **compiled** for `help:`/`description:`,
+   for `icon:` and for `parent:`, validated otherwise, so its help text is never
+   inert: it becomes `sys_table.description` and the whole of the manual's prose
+   (§5.3, §5.6).
+3. **A rule that must act needs `%%action`** — the node-graph form cannot.
+4. **Never hard-code a model string or base URL.** Import from
+   `packages/ai/src/config.ts`.
+5. **Never add a generator input at a call site.** It goes in
+   `pipeline/generate-application.ts`, once.
+6. **`bun run type-check` proves nothing about templates.** Generate an app and
+   build it.
+7. **Do not look for per-entity UI components.** Screens come from the
+   dictionary; change the model or the dictionary row.
+8. **`%%rbac` restricts, never grants.** A target no directive names is open. If
+   asked why a rule "isn't working", check in order: is the role name reaching
+   the request (`sysRoles` vs Better Auth's `role`), is the caller a master
+   role, and for a transition — is the record actually in the `from` state the
+   rule covers?
+9. **Use `bun`/`bunx`, never `npm`/`pnpm`/`npx`**, including in generated
+   projects.
+10. **Update `language/appwithai-language.json` first** when changing language
+    semantics, then the spec docs and grammar, then the parsers.
+11. **When the definition and a compiler disagree, the compiler wins** — and the
+    definition is the bug to fix.
+12. **Never hand over a model you have not checked.** §10.6 — three clean
+    checker passes over unchanged bytes, at most three correction attempts, and
+    say plainly what remains if it does not come clean. Where the runtime cannot
+    reach the checker at all, work the §10.6 ladder to its last rung first, then
+    the manual review — and report it as a manual review. **A repository you
+    could not clone is not a checker you could not run**: the engine is
+    published at `https://www.appwithai.org`, reachable by one `curl`, and runnable in a
+    browser tab. Never describe anything but a run of the published engine as a
+    checker result, and never withhold the file because you could not produce
+    one.
+13. **Never cross a gate the user has not approved.** An inferred approval is
+    the failure this edition exists to prevent. A gate is an explicit question
+    with real options, not a pause in the prose.
+14. **The session directory is the state, not the conversation.** Write each
+    phase's output to disk before starting the next one, and on resume read
+    `progress.md` before asking the user anything.
+15. **The `.mmd` is built as the walkthrough runs**, from Gate B onward (§10.3),
+    and never reconstructed at the end from what is still in context — that is
+    the failure mode the parallel build removes.
+16. **Every step that touches the `.mmd` ends with the fixer and then the
+    checker** (§10.0), from the seed onward, and no gate closes over a document
+    with errors. Validation is a per-step precondition, not a phase at the end;
+    Phase 6 only confirms what every earlier step already held.
+17. **Say what the `enterprise-reporting` target does not compile.** Workflows
+    and `%%rbac` are not compiled there (§4.1.2). A model author who believes
+    their access rules were generated has an unguarded application and no reason
+    to look, so state it before they ask.
+18. **Never describe MariaDB, SQLite, BullMQ or Redis as part of the reporting
+    platform.** They appear in that tree — in `docs/`, in three compose files,
+    in a dead `src/lib/queue/` — and none of them runs. The config database is
+    PostgreSQL; jobs are Trigger.dev with a built-in Bun cron fallback.

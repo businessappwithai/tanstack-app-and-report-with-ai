@@ -9,7 +9,7 @@
  *                     Produced by `Bun.build`, whose output depends on the bun
  *                     version *and* the platform — the full-stack bundle is
  *                     807407 bytes built on macOS and 807697 on Linux, same
- *                     bun version, same frozen lockfile.
+ *                     bun 1.4.0, same frozen lockfile.
  *
  *   verbatim copies   runtime-assets.generated.ts, overlay-assets.generated.ts,
  *                     html/wasm-app/sw.js
@@ -25,21 +25,15 @@
  */
 
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
-/** Where CI's pinned version lives, so this cannot drift from the workflow.
- *
- * `root-ci.yml`, not `ci.yml` — that is the product repository's name for it,
- * and this module arrived here carrying it. A path that does not exist makes
- * `pinnedBunVersion` return null on every run, so the notice below never named
- * a version and always took the "your runtime differs from CI" branch, telling
- * a reader building on exactly CI's runtime to go and build it in Docker. */
-const WORKFLOW = ".github/workflows/root-ci.yml";
+/** Where CI's pinned version lives, so this cannot drift from the workflow. */
+const WORKFLOW = ".github/workflows/ci.yml";
 
 /** Every CI job runs on `ubuntu-latest`; the workflow holds no variable for it. */
 const CI_PLATFORM = "linux-x64";
 
-/** e.g. `bun 1.4.3 on linux-x64` — or node, if somehow run without Bun. */
+/** e.g. `bun 1.4.0 on linux-x64` — or node, if somehow run without Bun. */
 function runtimeLabel(): string {
   const runtime =
     typeof Bun === "undefined" ? `node ${process.versions.node}` : `bun ${Bun.version}`;
@@ -51,26 +45,13 @@ function runtimeLabel(): string {
  *
  * Parsed rather than hardcoded: a message that confidently names the wrong
  * version is worse than one that admits it does not know.
- *
- * `root-ci.yml` pins one, `BUN_VERSION`, for every job. The pattern below is
- * anchored so that a second pin with that prefix (there used to be a
- * `BUN_VERSION_WASM`) would not be read in its place.
  */
 function pinnedBunVersion(root: string): string | null {
-  /* `root` is the manifest root, which in this repository is `common/` — the
-     workflows sit one level above it, beside `deps.json`. In the product
-     repository the two are the same directory, which is why this module
-     arrived looking only in `root` and silently finding nothing here. Walk up
-     instead of assuming either shape. */
-  for (let dir = root; ; dir = dirname(dir)) {
-    try {
-      const workflow = readFileSync(join(dir, WORKFLOW), "utf-8");
-      const pinned = /^\s*BUN_VERSION:\s*["']?([\w.]+)["']?/m.exec(workflow)?.[1];
-      if (pinned) return pinned;
-    } catch {
-      /* not at this level; try the parent */
-    }
-    if (dirname(dir) === dir) return null;
+  try {
+    const workflow = readFileSync(join(root, WORKFLOW), "utf-8");
+    return /^\s*BUN_VERSION:\s*["']?([\w.]+)["']?/m.exec(workflow)?.[1] ?? null;
+  } catch {
+    return null;
   }
 }
 
