@@ -216,7 +216,7 @@ function update(file: DepsFile): number {
   if (moved > 0) {
     writeFileSync(DEPS_FILE, `${JSON.stringify(file, null, 2)}\n`);
     console.log(`\n  deps.json rewritten. ${bold("Run the checks before committing it:")}`);
-    console.log("    ./deps.sh && cd common && bun run check");
+    console.log("    ./deps.sh && cd common && bun run check:all");
   }
   return failed;
 }

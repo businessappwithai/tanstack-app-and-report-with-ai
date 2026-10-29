@@ -91,7 +91,7 @@ what a generated application contains:
 - `packages/generator/src/rules/` — `flowchart-parser.ts`, `jdm-converter.ts`, `index.ts` (`%%action`)
 - `packages/generator/src/hooks/index.ts` — `%%hook`, handler form
 - `packages/generator/src/workflows/` — `index.ts` (state, saga), `steps.ts` (`%%step`, `%%loop`)
-- `packages/generator/src/rbac/index.ts` — `%%rbac` on CRUD operations; a transition is never granted (`EML215`), because only background workflows change a state
+- `packages/generator/src/rbac/index.ts` — `%%rbac` on CRUD operations and on the moves of a record's flow (its action buttons), `reopen` included
 
 The web app keeps its own parsers for the editors — they run in the browser and
 cannot import the generator. They read the same syntax but do not decide what is

@@ -42,39 +42,43 @@ smoke-test                 /app and /report answer, and the seeder finished
 
 ---
 
-## Bun 1.4.3, and only Bun 1.4.3
+## Bun 1.4.4, and only Bun 1.4.4
 
-**Every repository in this project uses Bun 1.4.3 and no other version** —
+**Every repository in this project uses Bun 1.4.4 and no other version** —
 `app-with-ai-tanstack`, `app-and-report-with-ai-tanstack`,
 `enterprise_reporting_tanstack` and `businessappwithai.github.io`. That is the
 rule for every runtime, install, build, test and type-check, in CI, in Docker
 images and locally. There are no exceptions: the WASM build and the
-`appwithai-wasm` CLI run on 1.4.3 too (the second 1.3.11 pin they used to have
+`appwithai-wasm` CLI run on 1.4.4 too (the second 1.3.11 pin they used to have
 is gone).
 
-- **Never use another Bun.** Not 1.3, not 1.4.0–1.4.2, not a newer release. Bun's
+- **Never use another Bun.** Not 1.3, not 1.4.0–1.4.3, not a newer release. Bun's
   bundler output depends on the exact version, so a committed bundle built on
-  another one is byte-wrong for CI; and `bun check`, the type checker every
-  repository runs, first shipped in 1.4.3 — on 1.4.2, `bun check` silently runs a
-  package script named `check` instead, if there is one.
-- **Never use npm, pnpm or yarn** as the package manager, and never `tsc` as the
-  type checker — `bun check` is the static check, and there is no linter or
-  formatter.
-- **Pin it exactly** wherever a version is stated: `BUN_VERSION: "1.4.3"` in CI,
-  `oven/bun:1.4.3` in Dockerfiles, `"bun": ">=1.4.3"` in `engines`. Moving to a
-  different Bun is one deliberate change made in all four repositories together,
-  never in one alone.
+  another one is byte-wrong for CI; and a Bun older than 1.4.3 has no type
+  checker behind `bun check` at all.
+- **The static check is `bun check`, and only `bun check`.** There is no linter
+  or formatter, and nothing runs `tsc` as the type checker.
+- **No `package.json` may have a script named `check`.** On 1.4.4 as on every
+  earlier Bun, `bun check` in a directory whose manifest has a `check` script runs
+  that script instead of the type checker, silently. This repository's aggregate
+  used to be called `check` — which is why `type-check` once had to `cd ..` to
+  reach the real checker. It is `check:all` now.
+- **Never use npm, pnpm or yarn** as the package manager.
+- **Pin it exactly** wherever a version is stated: `BUN_VERSION: "1.4.4"` in CI,
+  `oven/bun:1.4.4` in Dockerfiles, `"bun": ">=1.4.4"` in `engines`, `1.4.4` in
+  `.bun-version`. Moving to a different Bun is one deliberate change made in all
+  four repositories together, never in one alone.
 - **What a generated application runs on is a separate question.** The browser
   (WASM) application the generator writes is Bun-free by design — its overlay
   swaps bun for node — and that is about the *output*, not the toolchain that
   produced it.
 
 **Here:** `BUN_VERSION` in `root-ci.yml` (one pin, for every job — the WASM
-CLI's job included), the `report` and `seeder` images, and `engines` in
-`common/package.json` and `common/language/cli/package.json`. If `bun --version`
-prints anything else, install 1.4.3 before believing any check: `bun run
-type-check` on an older Bun fails with "Script not found", and the bundle
-`--check` steps name the mismatch.
+CLI's job included) and `build-and-run.yml`, the `report` and `seeder` images,
+`engines` in `common/package.json` and `common/language/cli/package.json`, and
+`.bun-version`, which the `SessionStart` hook installs. If `bun --version` prints
+anything else, install 1.4.4 before believing any check: the bundle `--check`
+steps name the mismatch.
 
 ---
 
@@ -103,7 +107,7 @@ is debugging across the boundary.
 **Moving a pin is a deliberate step, taken by running the checks:**
 
 ```bash
-./deps.sh --update && ./deps.sh --install && cd common && bun run check
+./deps.sh --update && ./deps.sh --install && cd common && bun run check:all
 ```
 
 ### Why the checkouts are needed, precisely
@@ -182,7 +186,7 @@ longer takes the `common` build context.
 │   ├── root-ci.yml       models · types · stacks · both CLIs · reporting pack
 │   └── build-and-run.yml the orchestrator: generate → configure → build → run → smoke-test
 ├── common/               everything that is not a product
-│   ├── package.json          the only manifest; `bun run check` lives here
+│   ├── package.json          the only manifest; `bun run check:all` lives here
 │   ├── tsconfig.language.json  strict; covers language/, build/, scripts/
 │   ├── language/         EML — definition, spec, grammar, checker, fixer, composer, CLI
 │   │   ├── appwithai-language.json   ⭐ the canonical machine-readable definition
@@ -221,7 +225,7 @@ inside `common/`. The scripts resolve their own paths from `import.meta.dir`.
 cd common
 bun install
 
-bun run check            # models → types → validators → stacks → CLIs → pack
+bun run check:all        # models → types → validators → stacks → CLIs → pack
 bun run check:models     # every model checks clean, and the duplicated copies match
 bun run type-check       # bun check over tsconfig.language.json — see below
 bun run build:language-tools        # bundle html/checker.js and html/fixer.js
@@ -269,13 +273,13 @@ missing `./deps.sh`, not a broken repository.
 ### Use bun, never npm or pnpm
 
 Bun is the runtime, the package manager and the test runner. Everything runs
-on **Bun 1.4.3** — CI's `BUN_VERSION`, the `report` and `seeder` images, the
-nightly build, and both CLIs. The manifest's floor is `>=1.4.3`.
+on **Bun 1.4.4** — CI's `BUN_VERSION`, the `report` and `seeder` images, the
+nightly build, and both CLIs. The manifest's floor is `>=1.4.4`.
 
 The `appwithai-wasm` CLI used to be the exception, checked on a second pin
-(`BUN_VERSION_WASM: "1.3.11"`). `app-with-ai-tanstack` requires 1.4.3 in every
+(`BUN_VERSION_WASM: "1.3.11"`). `app-with-ai-tanstack` requires 1.4.4 in every
 manifest — the generator that ships that CLI included — and builds and tests its
-WASM stack on 1.4.3, so the second pin was proving the CLI on a runtime its own
+WASM stack on 1.4.4, so the second pin was proving the CLI on a runtime its own
 package no longer supports. It is gone. What the WASM path *generates* is still
 Bun-free: the overlay swaps bun for node in the application it writes, and that
 has nothing to do with the bun the CLI itself runs on.
@@ -285,17 +289,17 @@ has nothing to do with the bun the CLI itself runs on.
 Biome is gone: `language/biome.json`, the dependency, the `lint` scripts and the
 CI step. Bun has no linter, so nothing checks style; keep the existing style by
 hand (2 spaces, double quotes, semicolons, 100 columns). The static check is
-**`bun check`**, the type checker built into Bun 1.4.3: same errors as `tsc`,
-about 0.2 seconds over the 65 files `tsconfig.language.json` covers.
+**`bun check`**, the type checker built into Bun since 1.4.3: same errors as `tsc`,
+about 0.2 seconds over the 73 files `tsconfig.language.json` covers.
 
-**`type-check` runs it from the repository root, and that is load-bearing.**
-Inside `common/`, `bun check` means *this package's own `check` script* — Bun
-runs a package script of that name in preference to the built-in, so it quietly
-ran models, stacks, CLIs and pack instead of type-checking. The root has no
-`package.json`, so there it is the type checker:
-`cd .. && bun check -p common/tsconfig.language.json`. On a Bun older than 1.4.3
-it fails with "Script not found" rather than passing. `typescript` stays a
-dependency for editors; nothing in a script runs `tsc`.
+**`type-check` is `bun check -p tsconfig.language.json`, run inside `common/`.**
+It used to run from the repository root, because inside `common/` `bun check`
+meant *this package's own `check` script* — Bun runs a package script of that
+name in preference to the built-in, so it quietly ran models, stacks, CLIs and
+pack instead of type-checking. The aggregate is `check:all` now and nothing
+shadows the checker. On a Bun older than 1.4.3 it fails with "Script not found"
+rather than passing. `typescript` stays a dependency for editors; nothing in a
+script runs `tsc`.
 
 ---
 
@@ -451,14 +455,14 @@ the built one contains both.
 Two things make it easy to get wrong:
 
 - **`Bun.build` output depends on the bun version *and* the platform.** `root-ci.yml`
-  pins `BUN_VERSION: 1.4.3` and runs on `linux-x64`; a bundle built on anything else is
+  pins `BUN_VERSION: 1.4.4` and runs on `linux-x64`; a bundle built on anything else is
   byte-wrong for CI while looking right locally. `scripts/lib/build-env.ts` reads that
   pin out of the workflow and says which case a mismatch is, rather than "out of date"
   — which is true of a stale build and misleading about a foreign one. The branch this
   arrived on had been built on an older bun: it passed `--check` on its author's
   machine and failed on CI's runtime.
 - **`check:language-tools` is a CI step of its own.** The `language` job does not run
-  `bun run check` — it runs `check:models` and `type-check` separately — so
+  `bun run check:all` — it runs `check:models` and `type-check` separately — so
   adding a check to that script alone would never run in CI.
 
 `website/viewers/eml-model.js` is **not** built here and stays vendored: its entry lives
@@ -682,7 +686,7 @@ are made required checks they need a skip-path fallback.
 1. Branch from `main`.
 2. `./deps.sh --install`, then `cd common && bun install`. Neither check means
    anything without both.
-3. Run `bun run check` before pushing — or at minimum `check:models` and
+3. Run `bun run check:all` before pushing — or at minimum `check:models` and
    `type-check`.
 4. If you touched a model under `language/examples/`, update its twin under
    `html/models/`.

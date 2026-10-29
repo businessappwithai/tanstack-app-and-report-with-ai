@@ -107,7 +107,9 @@ function ddlType(attr: EmlAttribute): string {
  * The entity's state field, when it has a state machine: the one column no
  * person changes. It starts at the machine's initial state, is never a form
  * input or part of an update, is shown read-only in the detail page's header,
- * and is always a column of the list. Only background workflows move it.
+ * and is always a column of the list. It is the record's lifecycle: in the
+ * product's stacks it moves by action buttons along the edges the diagram draws,
+ * which this target does not compile, so here no screen moves it.
  */
 interface StateField {
   field: string;
@@ -297,8 +299,9 @@ export const update${Type}Fn = createServerFn({ method: "POST" })
       ...rest
     } = data as Record<string, unknown> & { id: string };
     delete rest["${pk}"];${state ? `
-    // ${state.field} is system-managed: only background workflows change it. A
-    // value sent back unchanged is dropped; a different one is refused.
+    // ${state.field} is the record's lifecycle, moved by action buttons and
+    // workflows, never typed. A value sent back unchanged is dropped; a
+    // different one is refused.
     if ("${state.field}" in rest) {
       const stored = await getDb()
         .selectFrom("${tableName}")
@@ -307,7 +310,7 @@ export const update${Type}Fn = createServerFn({ method: "POST" })
         .executeTakeFirst();
       if (stored && String(stored.${state.field} ?? "") !== String(rest["${state.field}"] ?? "")) {
         throw new Error(
-          "${STATE_FIELD_REFUSAL_CODE}: ${state.field} is changed only by background workflows, never by a person."
+          "${STATE_FIELD_REFUSAL_CODE}: ${state.field} moves by the record's action buttons, never by an edit."
         );
       }
       delete rest["${state.field}"];
@@ -592,7 +595,7 @@ function ${Type}DetailPage() {
         {!isNew && form.${state.field} ? (
           <span
             data-testid="record-state"
-            title="Changed only by background workflows"
+            title="Moved by the record's action buttons, never typed"
             className="rounded-full border px-2.5 py-0.5 text-xs font-medium uppercase"
           >
             {form.${state.field}.replace(/_/g, " ")}

@@ -257,7 +257,7 @@ var appwithai_language_default = {
     E --> F[Response]`
         },
         stateForm: {
-          description: "stateDiagram-v2 expresses a long-running/entity status workflow. States map to a status enum; transitions map to allowed status changes and can be guarded.",
+          description: "stateDiagram-v2 expresses a long-running/entity status workflow. States map to a status enum; transitions are the moves background workflows may make. The state field is system-managed: no person changes it through a form.",
           example: `stateDiagram-v2
     [*] --> Draft
     Draft --> Submitted : submit
@@ -471,6 +471,50 @@ var appwithai_language_default = {
         EML103: "A column the generator manages, declared in the model - the declaration is ignored."
       }
     },
+    fieldLogic: {
+      description: "Compiere's Display Logic, Read Only Logic and Mandatory Logic: three conditions a field carries in the Application Dictionary, each a boolean expression over the values of the record being edited. They are declared on the column with %%field and kept as three separate rules, as Compiere keeps them, because showing a field, letting it be changed and requiring it are three different decisions.",
+      declare: {
+        display: "%%field <Entity>.<column> display: <logic> - the field is on the form only while the logic is true. Compiled to sys_field.display_logic.",
+        readonly: "%%field <Entity>.<column> readonly: <logic> - the field cannot be changed while the logic is true. Compiled to sys_column.read_only_logic and sys_field.read_only_logic.",
+        mandatory: "%%field <Entity>.<column> mandatory: <logic> - the field must have a value while the logic is true. Compiled to sys_column.mandatory_logic and sys_field.mandatory_logic."
+      },
+      syntax: {
+        condition: `<operand> <operator> <operand>, where an operand is @column@ (a column of the same entity), a quoted literal 'x' or "x", or a bare word. One side must be a column.`,
+        operators: {
+          "=": "equal",
+          "!": "not equal (!=, ^ and <> are read the same)",
+          ">": "greater than",
+          "<": "less than",
+          ">=": "greater than or equal",
+          "<=": "less than or equal"
+        },
+        joins: "& (and) and | (or), evaluated strictly left to right with no precedence and no parentheses - a | b & c is (a | b) & c, as Compiere's Evaluator reads it.",
+        values: "A Yes/No column reads Y or N; an empty value is the empty string (@x@='' tests for it, @x@!'' for a value); two operands that both read as numbers compare as numbers, anything else as text - so an ISO date compares in date order.",
+        examples: [
+          "@IsSOTrx@=Y",
+          "@DocStatus@!DR",
+          "@GrandTotal@>1000",
+          "@IsSOTrx@=Y & @DocStatus@=DR",
+          "@DocStatus@=CO | @DocStatus@=CL"
+        ],
+        oneReading: "language/field-logic.ts parses and evaluates it. The checker validates with it and the generated applications evaluate with a byte-identical copy (templates/common/field-logic.ts) and, in the browser stack, its JavaScript twin (templates/wasm/server/lib/field-logic.js), held to the same cases by a parity test."
+      },
+      columnAndField: "Compiere keeps the column (sys_column - storage: data type, mandatory, updateable) apart from the field (sys_field - one window's view of it: shown, read-only, mandatory, layout). The model's read-only and mandatory logic is written to both, so a new window over the same table inherits it; display logic belongs to the field alone. A field's own logic, when an administrator sets one, wins over the column's.",
+      evaluation: {
+        displayed: "The field's is_displayed flag, and then its display logic.",
+        readOnly: "The field's is_read_only flag, or its read-only logic.",
+        mandatory: "The column's is_mandatory flag, or the mandatory logic - and only while the field is displayed: a value nobody can see is not one anybody can be made to enter.",
+        dependencies: "The form re-evaluates all three on every change to a column the logic reads, so a field appears, locks or becomes required as the record is edited."
+      },
+      enforcement: "The form's evaluation is a convenience; the API is the control. Both generated stacks evaluate the same logic on every create and update: a field whose mandatory logic is true for the record as it will be saved, and which is displayed, must have a value (400, 'Validation failed'); a field whose read-only logic is true for the record as it is stored cannot be changed by an update (400). A create has nothing stored to lock, so read-only logic does not refuse one. Display logic hides a field and never refuses a write.",
+      notSupported: "Compiere's global context variables (@#AD_Client_ID@), SQL logic (@SQL=...) and Java callouts. Logic reads the record's own columns only; a rule that needs another table, a role or a computed value belongs in %%action or a %%hook.",
+      checkerCodes: {
+        EML156: "error - a display:, readonly: or mandatory: value that does not parse as Compiere logic.",
+        EML157: "error - the logic reads @column@ that the entity does not declare.",
+        EML158: "warning - display logic that depends on its own field: once hidden, nobody can see it to change it back.",
+        EML159: "warning - logic placed on the primary key or on the state field, neither of which is ever an input."
+      }
+    },
     optimisticLocking: {
       description: "Every generated stack refuses a save made against a record version someone else has already moved past, instead of letting the second save silently overwrite the first. It rides on the managed `version` column, so a model declares nothing to get it.",
       contract: {
@@ -490,7 +534,7 @@ var appwithai_language_default = {
       manual: "The generated manual carries a section, When two people change the same record, naming the three choices."
     },
     alsoDerived: [
-      "Each entity becomes a sys_table with a window and a tab; attributes become fields in declared order (seqNo = (index + 1) * 10).",
+      "Each entity becomes a sys_table with a window and a tab; attributes become fields in declared order (seqNo = (index + 1) * 10), unless the entity declares %%section - then the fields follow the sections and their rows. See formLayout.",
       "%%index becomes real indexes; a unique attribute or a `name` column is indexed automatically (mergeIndexes).",
       "%%category becomes the dashboard grouping; a model declaring none gets a single General category holding every entity.",
       "%%field <Entity>.<column> help: and %%entity <Name> help: become sys_column.description and sys_table.description - the help a reader sees under the field and beside the table. %%entity description: is the same key under its other name.",
@@ -524,11 +568,46 @@ var appwithai_language_default = {
         EML151: "help that describes its subject rather than restating its name",
         EML152: "%%entity <Name> help: on an entity",
         EML153: "%%field <Entity>.<column> help: on every column but the primary key",
-        EML154: "name: on a %%category — without it the grouping is dropped"
+        EML154: "name: on a %%category — without it the grouping is dropped",
+        EML170: "%%section on every entity — without it the form is one flat, unheaded column of fields",
+        EML172: "every column but the primary key placed in a %%section row — an unplaced column falls into a trailing Other section",
+        EML177: "help: on every %%section that says what the section is for — it is the sentence under the heading"
       },
-      required: "A delivered model carries none of these six. They are warnings by severity and gaps by consequence: audit-model.mjs fails a model carrying any of them, and formatReport's verdict names them apart from the advisory warnings (DICTIONARY_COMPLETENESS in language/browser/checker.entry.ts).",
+      required: "A delivered model carries none of these nine. They are warnings by severity and gaps by consequence: audit-model.mjs fails a model carrying any of them, and formatReport's verdict names them apart from the advisory warnings (DICTIONARY_COMPLETENESS in language/browser/checker.entry.ts).",
       planFirst: "Decide every value before writing the document — per entity its help, category and parent; per column its type, modifiers, FK target, enum binding and help; per cross-entity step the row it aims at (targetSource or targetField, else EML265). A value improvised while typing the ERD is the one that comes out as a restatement.",
-      reviewUntilClean: "A clean checker run starts the review rather than ending it: re-read the file against the plan, confirm none of the six codes and a 22/0 audit, read every help line as the person on the generated screen would, and after any fix re-run the checker and the audit from zero. The review ends when a full pass finds nothing to change, not when a cycle count runs out."
+      reviewUntilClean: "A clean checker run starts the review rather than ending it: re-read the file against the plan, confirm none of the nine codes and a clean audit, read every help line as the person on the generated screen would, and after any fix re-run the checker and the audit from zero. The review ends when a full pass finds nothing to change, not when a cycle count runs out."
+    },
+    formLayout: {
+      description: "How a record's form is laid out: headed sections, each of rows of one or two fields. It is the third layer of the dictionary - a column says what is stored, a field says that it is on the screen, and a section says where and beside what. Declared by `%%section`, compiled to one sys_field_group per section (sys_field_group.columns = 2, description = the section's help) and to each field's sys_field_group_id, seq_no, is_same_line (the right-hand field of a pair) and column_span (2 for a row of one); the dictionary has no X or Y position. Both stacks draw it: the NestJS form as a two-column grid per group, the browser form the same way.",
+      directive: "%%section entity: <Entity>; name: <Label>; help: <text>; rows: <column>, <column> | <column> | ...; collapsed: true",
+      mandatory: "Every entity declares its sections, and every column but the primary key sits in exactly one row of one of them. A form is the screen people use all day; the model is the only place its layout is decided, and an entity without sections is generated as one flat, unheaded list in declared order - correct, and nothing anyone designed.",
+      rows: [
+        "Two columns per row is the norm. Pair columns a person fills or reads together: first_name beside last_name, start_date beside end_date, quantity beside unit_price, a reference beside the status it moves through.",
+        "A row of one spans the full width. Use it for text and memo columns (reference 14), for an address, and for a reference whose label is long - never to avoid deciding what pairs with what.",
+        "More than two columns in a row is an error (EML174): the form is a two-column grid, and a third column has nowhere to go."
+      ],
+      sections: [
+        "Name a section for what the person is doing in it - Identity, Contact, Terms, Delivery, Clinical findings - not for the kind of column it holds. `References`, `Dates` and `Numbers` are a schema, not a form.",
+        "Open with the section that identifies the record: its name or number and the one or two values someone checks first. The display value's columns belong there.",
+        "Keep a section to the fields that are read together - roughly two to six rows. An entity with eight columns has two or three sections, not one; an entity with three columns may have one.",
+        "Put what is rarely touched last, and mark it `collapsed: true`: internal notes, integration references, figures only an administrator reads.",
+        "A line item (`%%entity <Child> parent:`) has sections too: they are what its own form shows when a row is opened from the parent's tab."
+      ],
+      help: "`help:` on a section is compiled to sys_field_group.description and printed under the heading. Say what the section is for and what has to be true before it is complete - `What was agreed with the supplier: the price, the terms and the date it stops applying.` - not `Terms fields.`. It is part of the help contract (helpText) and held to it the same way: EML177 reports a section with none, or one that restates its name.",
+      unplaced: "A column of a sectioned entity that no row names is not lost: it is generated into a trailing collapsed `Other` section, and EML172 reports it. The fixer places it for you by appending rows of two to the entity's last section, which is a repair and not a design - move it to where it belongs.",
+      entitiesWithoutSections: "An entity with no %%section is generated exactly as it was before the directive existed: one tab, every field in declared order, no headings. It is legal, it is what an older model produces, and it is EML170.",
+      checkerCodes: {
+        EML170: "warning — an entity declares no %%section. Dictionary completeness.",
+        EML171: "error — a %%section without one of its required keys: entity, name or rows.",
+        EML172: "warning — columns of a sectioned entity placed in no row. Dictionary completeness. Auto-fixable: appended to the entity's last section, two per row.",
+        EML173: "error — a %%section names an entity the model does not declare.",
+        EML174: "error — a row with more than two columns. Auto-fixable: split into rows of two.",
+        EML175: "warning — a column placed in two rows. Auto-fixable: the later placement is removed.",
+        EML176: "error — a row names a column the entity does not declare, or its primary key, which no form shows.",
+        EML177: "warning — a %%section with no help:, or help that restates the section's name. Dictionary completeness.",
+        EML178: "warning — a row places the state field of an entity with a state machine. It is shown read-only in the form's header instead. Auto-fixable: removed from the row."
+      },
+      stateField: "The state field of an entity with a kind: state machine is not part of the form body: it is a read-only badge in the form's top header and always a list-grid column (workflowConstructs.stateForm.display). It is the one column a sectioned entity leaves out of every row, and EML170/EML172 do not count it."
     },
     masterDetail: {
       description: "A line item is an entity with no life away from its owner - an invoice line, an order line, a prescription item. The ERD cannot tell one from an ordinary reference, because InvoiceLine.invoice_id and Invoice.patient_id are both a foreign key with a relationship behind it. The modeller says which it is.",
@@ -564,12 +643,19 @@ var appwithai_language_default = {
       EML147: "%%entity ... parent: names an entity that is not declared, or the entity names itself.",
       EML148: "%%entity ... parent: is declared but the child has no foreign key back to the parent, so the detail tab has nothing to link on.",
       EML149: "info — an entity shaped like a line item that declares no parent:. Names the candidate parent and the column a tab would link on. Never an error: identifyingAChild's three questions are about the business, not the document.",
+      EML155: "info — a line item of a line item: parent: names an entity that is itself declared parent:. The dictionary has two levels, so the deeper entity is generated as a top-level one (own window and dashboard card, foreign key kept) rather than as a tab. Mirrors flattenNestedLineItems in the generator's parser; only a parent: that takes effect (declared parent, foreign key to it) counts.",
       EML150: "warning — an entity declared parent: is also named in a %%category. The category asks for a dashboard card the directive has taken away.",
       EML151: "warning — entity or column help that restates its own name instead of describing it. See helpText.mustBeDomainKnowledge.",
       EML152: "warning — an entity with no help text at all.",
       EML153: "warning — columns with no help text, reported once per entity.",
       EML154: "warning — a %%category with no `name:` key. category.parser.ts requires one and skips the line without it, so the whole grouping is silently lost and its entities fall into the default General category.",
-      EML500: "A `kind: state` workflow bound to an entity with no status/state/stage column at all - the machine has nothing to track."
+      EML500: "A `kind: state` workflow bound to an entity with no status/state/stage column at all - the machine has nothing to track.",
+      EML275: "error — a cross-entity UpdateEntity/DeleteEntity step whose targetField is not a column of the target entity. targetField is matched on the target table against the triggering record's id; a child reaching its parent writes targetSource: <fk column> instead.",
+      EML509: "error — a `kind: state` machine draws a state named `final` or `error`. The record lifecycle reserves both as stored values: Final is every state the diagram ends, and Error is where a record whose Draft workflows failed goes. Compared exactly, so a `FINAL` status is an ordinary state.",
+      EML511: "info — a move the state diagram draws that no %%rbac line names. It is open to anyone who may update the entity, and the administrator; reported once per machine, listing the moves, so the choice is a visible one.",
+      EML512: "warning — a move rule (`<Entity>StateProgress`) or move saga (`<Entity><State>Move`) left from before action buttons: the saga only writes the state field and clears `_at` columns, the rule only starts such sagas. A button makes the move now, so they would move the record a second time. Auto-fixable: the section is removed and the `<state>_at` help rewritten (language/move-facts.ts).",
+      EML508: "warning — a saga's UpdateEntity step writes a value into a state field that the entity's state machine does not draw.",
+      EML178: "warning — a %%section row places the state field. The state is shown read-only in the form's header and as a list column, never in the form body. Auto-fixable: removed from the row."
     },
     reportDesigns: {
       description: "Generated applications include a document report subsystem backed by the AnkaReport library. One default AnkaReport layout is seeded per entity into sys_report_designs at generation time. Administrators can customise any layout at Admin → Report Designs. Users get a Print button on a record's detail view (visible only when a design exists for that table), and can export the rendered report to PDF.",
@@ -827,9 +913,14 @@ var appwithai_language_default = {
       start: "[*] --> FirstState",
       end: "LastState --> [*]",
       transition: "StateA --> StateB : eventName",
-      mappingHint: "States are treated as a status enum for the bound entity; transitions define the allowed status changes.",
-      enforcement: "The edges are enforced, not merely documented. Every transition a diagram draws is compiled into sys_workflow_transitions, and the generated EntityAccessGuard refuses a write that moves a record to a state with no matching edge from the state it is in — answering 403 and leaving the record where it was. This holds for every caller, the master role included: an edge the diagram never drew is not a permission an administrator lacks, it is a move that does not exist, and allowing it would put the record in a state every rule and workflow downstream was written without. Who may cross an edge that does exist is the separate question %%rbac answers, from sys_transition_access, and that one the master role does bypass. Keep the two apart: enforcing topology only where a role rule happens to cover it leaves every unguarded edge open.",
-      readingTheEdges: "GET /api/workflows/transitions returns the stored edges, optionally narrowed by ?table= and ?from=. A screen offering a status change asks this rather than offering every state and letting the save be refused. A table with no state diagram has no rows and nothing is enforced for it."
+      mappingHint: "States are the values of the bound entity's lifecycle column, between Draft and Error; transitions are the moves its action buttons make.",
+      enforcement: "The edges are enforced, not merely documented. A record moves only along an edge the diagram draws — by an action button (POST /api/bus/<entity>/<id>/transition) or by a workflow's UpdateEntity step — and a move with no edge from the record's state is refused with 409 `INVALID_TRANSITION`. This holds for every caller, the master role included: an edge the diagram never drew is not a permission an administrator lacks, it is a move that does not exist.",
+      lifecycle: "Every record has a lifecycle (language/state-field.ts is the one statement of it). It is saved in Draft. With no state machine it goes to Final when its workflows succeed, or to Error with their message when they fail; its column is `doc_status` (draft | final | error). With a machine its column is the state field, holding Draft, the machine's states and Error: a save from Draft or Error runs the workflows and, if they succeed, moves the record to the machine's initial state (staying in Draft when the machine starts there — a state named draft under any spelling is the lifecycle's Draft). Every state the diagram ends (x --> [*]) is Final. A Final record is locked: an update or delete is refused with 409 `RECORD_FINAL`, and only the `reopen` move, by the administrator or a role `%%rbac role:x on Entity.reopen` names, takes it back to Draft. An Error record stays editable; saving it starts over from Draft. A workflow that fails on a button press, or on saving a record in an intermediate state, rolls the change back with 422 and its message, and the record keeps its status. `final` and `error` are reserved state names (EML509).",
+      moves: "An action button for each edge out of the record's state, labelled with the edge's event (`close won` reads Close won) or, for an edge with no label, `Move to <state>`; a choice of several opens a menu. A move is limited to roles with `%%rbac role:<role> on <Entity>.<event>` (or `.from->to` for an edge with no label); a move no line names is open to anyone who may update the entity (EML511, info). A move may name an assignee who holds the next status's role. Each move stamps the `<state>_at` column when the entity has one and is logged in sys_record_transitions.",
+      stateField: "The state field is the column the machine drives: `status`, else `state`, else `stage`, whichever the bound entity declares first in that order (language/state-field.ts is the one statement of it, read by the checker, the generator and both runtimes). An entity with none drives the managed `workflow_status` column and draws EML500.",
+      systemManaged: 'Nobody types a status into a form. The lifecycle column is written by the save pipeline, an action button, or a workflow moving along a drawn edge. The generated API strips a value that equals the stored one (so a whole-record save still works) and refuses one that differs with 403 and `details.code: "STATE_FIELD_SYSTEM_MANAGED"`, for every caller, the master role included — the button is the way to move it. Move rules and sagas written before buttons existed are EML512, and the fixer removes them.',
+      display: "Where an entity has a state field it is shown, and it is shown in two places only. On the record's form it is a read-only badge in the top header, beside the record's title - never an input, on create or on edit. In the list grid it is always a column, whatever else the grid shows; it is not grid noise and an administrator's grid-visibility toggle cannot hide it. It is therefore never placed in a %%section row (EML178), and its absence from every row is not a gap (EML170/EML172 do not count it).",
+      readingTheEdges: "GET /api/bus/<entity>/<id>/actions returns the moves the caller may make from the record's state (the buttons), and GET /api/workflows/transitions every stored edge, optionally narrowed by ?table= and ?from=."
     },
     workflowKinds: {
       hook: {
@@ -840,7 +931,7 @@ var appwithai_language_default = {
       },
       state: {
         form: "%%workflow <name> entity: <Entity> kind: state",
-        description: "A stateDiagram-v2 whose states map to a status enum for the bound entity. Transitions define the allowed status changes and are enforced as the entity's topology — see stateForm.enforcement. %%rbac directives naming a transition event add the role check on top of that; %%trigger directives declare external event sources. Fully parsed by the shipped hook-parser.",
+        description: "A stateDiagram-v2 whose states are the bound entity's lifecycle between Draft and Error. Each transition is an action button, limited to the roles a %%rbac line names, and the edges are enforced as the entity's topology — see stateForm.lifecycle, stateForm.moves and stateForm.enforcement. %%trigger directives declare external event sources. Fully parsed by the shipped hook-parser.",
         diagram: "stateDiagram-v2",
         shipped: true
       },
@@ -867,7 +958,7 @@ var appwithai_language_default = {
       types: [
         {
           name: "UpdateEntity",
-          purpose: "Write one column on the triggering record, or on rows of a related entity.",
+          purpose: "Write one column on the triggering record, or on rows of a related entity. `value: null` clears the column. It is the only writer of a state field: no person changes one.",
           required: ["field"],
           oneOf: [["source", "value"]],
           optional: ["entity", "targetField", "targetSource"],
@@ -1271,12 +1362,15 @@ var appwithai_language_default = {
         form: "%%field <Entity>.<attr> <key>: <value>",
         status: "compiled",
         consumedBy: [
-          "packages/generator/src/parsers/mermaid.parser.ts (the `enum:` and `help:` keys; the other keys are reserved)"
+          "packages/generator/src/parsers/mermaid.parser.ts (the `enum:`, `help:`, `display:`, `readonly:` and `mandatory:` keys; the other keys are reserved)"
         ],
-        purpose: "Extended field metadata: enum reference and help text, both compiled; ui control, default value, min/max and format are reserved.",
+        purpose: "Extended field metadata: enum reference, help text and Compiere field logic (display:, readonly:, mandatory: - see applicationDictionary.fieldLogic), all compiled; ui control, default value, min/max and format are reserved.",
         examples: [
           "%%field Order.status enum: OrderStatus",
           "%%field Contact.account_id help: The company this person works for. Leave empty for a personal contact.",
+          "%%field Opportunity.loss_reason display: @stage@=closed_lost",
+          "%%field Opportunity.amount readonly: @stage@=closed_won | @stage@=closed_lost",
+          "%%field Contract.renewal_notice_days mandatory: @auto_renew@=Y",
           "%%field Product.price min: 0",
           "%%field User.email unique: true"
         ]
@@ -1300,6 +1394,22 @@ var appwithai_language_default = {
         examples: [
           "%%category name: Compound Registry; description: Structures and aliases; icon: FlaskConical; color: #6366f1; entities: Compound, CompoundAlias",
           "%%category name: People and Teams; default: true; entities: User, Team"
+        ]
+      },
+      {
+        keyword: "%%section",
+        form: "%%section entity: <Entity>; name: <Label>; help: <text>; rows: <column>, <column> | <column> | ...; collapsed: true",
+        status: "compiled",
+        consumedBy: [
+          "packages/generator/src/parsers/section.parser.ts -> entity.formSections",
+          "packages/generator/src/generators/dictionary.generator.ts -> sys_field_group, sys_field.sys_field_group_id / is_same_line / column_span",
+          "templates/common/seeds/sys-dictionary.ts.hbs (NestJS) and generators/wasm/model-bundle.ts (browser)"
+        ],
+        purpose: "Lay an entity's form out as headed sections of two-column rows. Each directive is one section of one entity: `name` is its heading, `help` the sentence under the heading, and `rows` its fields, rows separated by `|` and the one or two columns of a row by `,`. A row of two puts the columns side by side; a row of one spans the full width, which is where a text or memo column, or a reference worth its whole line, belongs. Sections render in declaration order and fields in row order. Repeating a section's `entity` and `name` continues it, so a long section can be written over several lines; `help` is read from the first. `collapsed: true` closes the section until it is opened. Every column of the entity but its primary key is placed in exactly one section - see applicationDictionary.formLayout. `entity`, `name` and `rows` are required. `help` may contain semicolons; no other value may.",
+        examples: [
+          "%%section entity: Order; name: Order; help: Who placed the order, when, and where it stands.; rows: order_number, order_date | customer_id, status",
+          "%%section entity: Order; name: Delivery; help: Where the goods go and how they travel there.; rows: shipping_address | carrier, tracking_number",
+          "%%section entity: Order; name: Notes; help: Anything the next person handling this order should know.; rows: notes; collapsed: true"
         ]
       },
       {
@@ -1341,26 +1451,25 @@ var appwithai_language_default = {
       },
       {
         keyword: "%%rbac",
-        form: "%%rbac <roleExpr> on <Entity>.<op>   where <op> is a CRUD operation (create|read|update|delete|*) or a transition event in <Entity>'s state machine",
+        form: "%%rbac <roleExpr> on <Entity>.<target>   where <target> is a CRUD operation (create|read|update|delete|*), a move of the entity's state machine (its event, or from->to for an edge with no label), or reopen.",
         status: "compiled",
         consumedBy: [
           "packages/generator/src/rbac/index.ts (compiles both forms)",
           "packages/generator/src/rbac/roles.ts (derives the roles, one seeded account each, and per-entity visibility)",
-          "seeded into sys_operation_access / sys_transition_access",
+          "seeded into sys_access_grant (kind op | move | reopen), read through the sys_user_capability view",
           "enforced by the generated EntityAccessGuard on /bus CRUD",
           "app-and-report-with-ai-tanstack: common/build/reporting-pack.ts -> one reporting role per declared role, scoped to the tables that role may read"
         ],
-        purpose: "Restrict a CRUD operation or a state transition to named roles. It restricts rather than grants: a target no directive mentions is open to any authenticated caller, so a model declaring no %%rbac generates what it always did. A target with one or more directives requires the union of the roles they name. A master role bypasses. That bypass is over access — who may do a thing — and not over the shape of the model: a state machine's topology is enforced for the master role too, because an edge the diagram never drew is a move that does not exist rather than a permission anyone is missing (see workflowConstructs.stateForm.enforcement). Role names are matched case-insensitively, because seeded roles are title-cased (Manager) and directives are written lower-case (role:manager) - an exact match would make such a rule unsatisfiable, locking out exactly the people it was written to admit. Spelled %%guard until that keyword was needed unambiguously for automation conditions.",
+        purpose: "Restrict a CRUD operation to named roles. It restricts rather than grants: a target no directive mentions is open to any authenticated caller, so a model declaring no %%rbac generates what it always did. A target with one or more directives requires the union of the roles they name. A master role bypasses. That bypass is over access — who may do a thing — and not over the shape of the model: a state machine's topology is enforced for the master role too, because an edge the diagram never drew is a move that does not exist rather than a permission anyone is missing (see workflowConstructs.stateForm.enforcement). Role names are matched case-insensitively, because seeded roles are title-cased (Manager) and directives are written lower-case (role:manager) - an exact match would make such a rule unsatisfiable, locking out exactly the people it was written to admit. Spelled %%guard until that keyword was needed unambiguously for automation conditions.",
         examples: [
           "%%rbac role:admin on Order.delete",
           "%%rbac role:sales|manager on Deal.update",
           "%%rbac role:admin on Customer.*",
-          "%%rbac role:sales_manager on Quote.approve",
           "%%rbac role:sales_rep|sales_manager|support_agent on Account.read"
         ],
         notes: {
           operations: "create | read | update | delete, plus * for all four. Aliases are accepted (insert/add, view/select/list, edit/write/modify, remove/destroy).",
-          transitions: "A name that is not a CRUD operation is resolved against the entity's stateDiagram-v2 transitions. There is no named-transition endpoint in a generated application - moving a record along an edge is a status update - so the rule is stored as the (from_state, to_state) pair it covers and the guard recognises the move by the states the write crosses. Both ends are kept because one event can sit on several edges and two events can reach the same state. This directive decides *who* may cross an edge; whether the edge exists at all is decided by the state diagram itself and enforced separately, so an edge no %%rbac names is open to any authenticated caller but an edge the diagram omits is refused to everyone.",
+          transitions: "A move is grantable: `%%rbac role:sales_manager on Opportunity.close_won` shows the Close won button only to sales managers (and the administrator). The target is the edge's event in one token (`close won`, `Close-Won` and `close_won` are one event), `from->to` for an edge with no label, or `reopen` for the move from a Final state back to Draft. A move no line names is open to anyone who may update the entity (EML511, info). Several lines naming one move merge, as `|` inside one line does. A user's access is the union of their roles: a role only adds access, there is no deny.",
           notSysAccess: "A restriction on any operation other than read deliberately does not write sys_access. That is a grant table feeding sys_refresh_dictionary_scope(), where the first row added narrows a window to one role; a restriction on deleting must not become a restriction on looking. read is the one exception, and it is the exception on purpose - see functionalRoles.",
           functionalRoles: "read is the operation that decides which functional role an entity belongs to, and the only one that changes what a role sees. An entity a role may not read is absent from that role's navigation entirely - no menu entry, no dashboard card, no lookup - because a menu full of entries that answer 403 is a worse application than a shorter one. A model is expected to name every entity on at least one `%%rbac ... .read` directive, so that every entity belongs to somebody. Declaring none leaves every entity visible to every signed-in caller, which is what every model did before this rule existed.",
           seededAccounts: "Every role a directive names is created, and one account is seeded holding it, beside the administrator who bypasses everything and a role-less User. An application whose only account is the administrator cannot demonstrate its own access control, because the administrator is exempt from all of it. Both stacks derive the same list from rbac/roles.ts, and both sign-in screens print it with the number of entities each role can see.",
@@ -1512,10 +1621,10 @@ var appwithai_language_default = {
       "3. Rules section -> flowchart-parser -> jdm-converter -> GoRules JDM graph -> seeded into sys_rule_definitions and evaluated by the rules engine.",
       "4. Rules section carrying %%action directives -> compileRules -> a GoRules decision table whose rows carry action/message/ruleId/workflowName outputs, instead of a node graph. This is how a model-declared rule reaches a model-declared saga: the rule's `when` expression decides, and its trigger-workflow action names the workflow.",
       "5. Workflow section, hook form -> compileHooks -> per-entity handler modules under src/modules/hooks/handlers plus a registry the bus service calls around every CRUD operation.",
-      "6. Workflow section, state form -> compileWorkflows -> BPMN seeded into sys_workflow_definitions; the trigger-workflow rules resolve it by name and the run puts a new record into the state machine's starting state. The same pass writes every edge the diagram draws into sys_workflow_transitions, which EntityAccessGuard reads to refuse a status write the model never allowed for, and which GET /api/workflows/transitions exposes so a screen can offer only the moves that exist.",
+      "6. Workflow section, state form -> compileWorkflows -> BPMN seeded into sys_workflow_definitions; the trigger-workflow rules resolve it by name and the run puts a new record into the state machine's starting state. The same pass writes every edge the diagram draws into sys_workflow_transitions, which EntityAccessGuard reads to find the entity's state field and refuse any status write a person makes (stateForm.systemManaged), and which GET /api/workflows/transitions exposes so a screen can say where a record can go next. Saga UpdateEntity steps write the state through the executor, never through /bus.",
       "7. Workflow section, saga form -> compileSagaWorkflows -> one bpmn:serviceTask per %%step, ordered by the flowchart edges, seeded into sys_workflow_definitions with source 'model'. A definition declared in the model is owned by the model: the generated Workflow Designer shows it read-only, and regeneration rewrites it. Definitions authored in the app carry source 'designer' and are never touched by regeneration.",
       "8. The whole document -> language/rag.ts -> retrieval chunks (one per entity, rule, workflow and spec section) -> the pgvector model_context index the assistant searches.",
-      "9. %%rbac directives -> compileRbac -> per-operation rules in sys_operation_access and per-transition rules in sys_transition_access, enforced by EntityAccessGuard on the generated /bus CRUD routes. Restrictive, not granting: a target no directive names stays open.",
+      "9. %%rbac directives -> compileRbac -> sys_access_grant rows (operations, moves along the state machine, reopen), read per user through the sys_user_capability view and enforced by EntityAccessGuard on the generated /bus routes and by the transition service on every button. Restrictive, not granting: a target no directive names stays open.",
       "10. ERD section -> nestjs-backend.generator -> one default AnkaReport layout per entity seeded into sys_report_designs. The layout renders every non-audit, non-PK field as a two-column (label | value) report. Administrators can customise layouts at Admin → Report Designs. Records get a Print button on their detail view if a design exists for their table.",
       "11. %%enum and %%workflow kind: state -> the generated test suite's harness/model.ts, which carries the declared values and edges into the suites as data. This is the one consumer that reads the model rather than the dictionary compiled from it, and the distinction is the point: a suite that asserts a running application against the dictionary the same generator wrote proves only that the application is self-consistent, and passes just as happily when a value or an edge was dropped on the way. Asserting against the model's own word is what makes a dropped %%enum value or a missing state-machine edge fail a test rather than ship. Read by suite 02c (references) and suite 06b (state machines)."
     ],
@@ -1554,7 +1663,7 @@ var appwithai_language_default = {
       help: "%%field <Entity>.<column> help: and %%entity <Name> help: (or description:). Both are compiled: the parser hangs the text on the attribute and the entity, the dictionary generator writes it to sys_column.description and sys_table.description, and the generated application shows it under the field and beside the table. It has a second consumer: packages/generator/src/manual/index.ts renders manual.html from the same parsed model, where this text is the entire 'what it is for' column — a field with no help prints a dash there. Write help on every entity and every column, and write domain knowledge rather than the name again: EML151, EML152 and EML153 report the three ways a model fails to. See applicationDictionary.helpText. Fully compiled.",
       validated: "%%rule and %%trigger, and the %%entity keys other than help:/description:. No compiler reads these yet, but language/checker.ts enforces their syntax and cross-references, so a malformed one fails validation instead of being silently dropped.",
       reserved: "The %%field keys other than enum: and help:. Renderer-safe and documented, with no reader. Writing one is legal and inert.",
-      access: "%%rbac, in both its CRUD and state-transition forms. Compiled to sys_operation_access / sys_transition_access and enforced by the generated EntityAccessGuard."
+      access: "%%rbac on CRUD operations. Compiled to sys_operation_access and enforced by the generated EntityAccessGuard. A state transition is not a grantable operation: the state field is system-managed."
     },
     validationRules: [
       "Every entity name must match ^[a-zA-Z][a-zA-Z0-9_]*$ and be unique within the document.",
@@ -1567,7 +1676,8 @@ var appwithai_language_default = {
       "A %%loop's loopId must be referenced by at least one %%step in: directive, and loops do not nest.",
       "At most one %%category in a document may declare default: true.",
       "A trigger-workflow action must name a workflow the document declares, or a workflow that already exists in the target application.",
-      "A %%rbac operation must be a CRUD operation (create/read/update/delete/*) or a transition event declared in the entity's state machine."
+      "A %%rbac target must be a CRUD operation (create/read/update/delete/*), a move the entity's state machine draws, or reopen (EML214).",
+      "A state machine draws no state named final or error (EML509), and the state field is never placed in a %%section row (EML178); a rule or saga that only moves a record is retired (EML512)."
     ],
     note: "Levels describe what the shipped generator does, not an aspiration. A directive's own `status` field in `directives.reserved` is authoritative for that directive; these levels group them. When a compiler is added for a reserved directive, its status and this list move together."
   },
@@ -1582,7 +1692,7 @@ var appwithai_language_default = {
       "EML001-EML099": "Document level: metadata, emptiness, section structure.",
       "EML100-EML119": "Entities and attributes.",
       "EML120-EML129": "Relationships.",
-      "EML130-EML199": "Directives attached to the ERD: %%enum, %%field, %%entity, %%index, %%category — including the line-item pair EML149 and EML150.",
+      "EML130-EML199": "Directives attached to the ERD: %%enum, %%field, %%entity, %%index, %%category, %%section — including the line-item pair EML149 and EML150, and the form-layout codes EML170-EML177.",
       "EML200-EML299": "Hooks, guards, triggers, workflows and rules as declared by directives.",
       "EML300-EML399": "Business-rule flowcharts.",
       "EML400-EML449": "Workflow sections: hook, state and saga.",
@@ -1594,9 +1704,14 @@ var appwithai_language_default = {
       EML112: "Duplicate attribute - deletes the later line, keeping the stronger constraints.",
       EML114: "Foreign key not ending in _id - appends the suffix.",
       EML117: "Entity has no primary key - prepends `string id PK`.",
+      EML172: "Columns placed in no %%section row - appends them to the entity's last section, two per row.",
+      EML174: "A %%section row with more than two columns - splits it into rows of two.",
+      EML175: "A column placed in two %%section rows - removes the later placement.",
+      EML178: "The state field placed in a %%section row - removes it from the row (a section left empty is removed).",
       EML287: "Rule condition names a camelCase identifier - rewrites it as the snake_case column.",
       EML421: "State workflow has no initial transition - inserts `[*] --> <firstState>`.",
-      EML422: "State workflow has no terminal state - appends `<lastState> --> [*]`."
+      EML422: "State workflow has no terminal state - appends `<lastState> --> [*]`.",
+      EML512: "A move rule or saga an action button replaces - removes the section and rewrites the stock help on its <state>_at columns."
     },
     note: "language/checker.ts AUTO_FIXABLE_CODES and the fixer's dispatch table must list the same codes; a code in one and not the other is either a fix that never runs or a promise the fixer cannot keep."
   }
@@ -5921,8 +6036,6 @@ var SysFieldSchema = objectType({
   seq_no: numberType(),
   seq_no_grid: numberType(),
   display_length: numberType().optional(),
-  x_position: numberType().optional(),
-  y_position: numberType().optional(),
   column_span: numberType().optional(),
   num_lines: numberType().optional(),
   is_displayed: booleanType(),
@@ -6091,6 +6204,7 @@ class MermaidParser {
     const declaredEnums = new Map;
     const enumBindings = [];
     const fieldHelpText = [];
+    const fieldLogic = [];
     const entityHelpText = new Map;
     const entityIcons = new Map;
     const entityParents = new Map;
@@ -6114,6 +6228,9 @@ class MermaidParser {
         const fieldHelp = this.parseFieldHelpDirective(trimmed);
         if (fieldHelp)
           fieldHelpText.push(fieldHelp);
+        const logic = this.parseFieldLogicDirective(trimmed);
+        if (logic)
+          fieldLogic.push(logic);
         const entityHelp = this.parseEntityHelpDirective(trimmed);
         if (entityHelp)
           entityHelpText.set(entityHelp.entity, entityHelp.help);
@@ -6163,6 +6280,7 @@ class MermaidParser {
     }
     this.attachIndexes(entities, declaredIndexes);
     this.attachHelp(entities, fieldHelpText, entityHelpText);
+    this.attachFieldLogic(entities, fieldLogic);
     this.attachIcons(entities, entityIcons);
     this.attachParents(entities, entityParents);
     const enums = this.attachEnums(entities, declaredEnums, enumBindings);
@@ -6199,6 +6317,27 @@ class MermaidParser {
         continue;
       child.parentEntity = parent.name;
       child.parentLinkColumn = link.name;
+    }
+    this.flattenNestedLineItems(entities);
+  }
+  flattenNestedLineItems(entities) {
+    const byName = new Map(entities.map((entity) => [entity.name, entity]));
+    const depth = (entity) => {
+      let levels = 0;
+      const seen = new Set;
+      for (let current = entity.parentEntity ? byName.get(entity.parentEntity) : undefined;current && !seen.has(current.name); current = current.parentEntity ? byName.get(current.parentEntity) : undefined) {
+        seen.add(current.name);
+        levels++;
+      }
+      return levels;
+    };
+    const nested = entities.filter((entity) => entity.parentEntity).map((entity) => ({ entity, levels: depth(entity) })).sort((a, b) => a.levels - b.levels);
+    for (const { entity } of nested) {
+      const parent = entity.parentEntity ? byName.get(entity.parentEntity) : undefined;
+      if (!parent?.parentEntity)
+        continue;
+      entity.parentEntity = undefined;
+      entity.parentLinkColumn = undefined;
     }
   }
   parseIndexDirective(line) {
@@ -6241,6 +6380,26 @@ class MermaidParser {
       return null;
     const help = match[3].trim();
     return help ? { entity: match[1], column: match[2], help } : null;
+  }
+  parseFieldLogicDirective(line) {
+    const match = line.match(/^%%field\s+([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s+(display|readonly|mandatory)\s*:\s*(.+)$/);
+    if (!match?.[1] || !match[2] || !match[3] || !match[4])
+      return null;
+    const logic = match[4].trim();
+    return logic ? { entity: match[1], column: match[2], kind: match[3], logic } : null;
+  }
+  attachFieldLogic(entities, logic) {
+    for (const { entity: name, column, kind, logic: expression } of logic) {
+      const attribute = entities.find((candidate) => candidate.name === name)?.attributes.find((candidate) => candidate.name === column);
+      if (!attribute)
+        continue;
+      if (kind === "display")
+        attribute.displayLogic = expression;
+      else if (kind === "readonly")
+        attribute.readOnlyLogic = expression;
+      else
+        attribute.mandatoryLogic = expression;
+    }
   }
   parseEntityHelpDirective(line) {
     const match = line.match(/^%%entity\s+([A-Za-z_]\w*)\s+(?:help|description)\s*:\s*(.+)$/);
@@ -6388,6 +6547,223 @@ class MermaidParser {
   }
 }
 
+// language/sections.ts
+var KEYS = new Set(["entity", "name", "help", "rows", "collapsed"]);
+var REQUIRED = ["entity", "name", "rows"];
+var DIRECTIVE2 = /^\s*%%section\b\s*(.*)$/i;
+function parseKeys(body) {
+  const keys = new Map;
+  let last;
+  for (const segment of body.split(";")) {
+    const match = segment.match(/^\s*([A-Za-z]+)\s*:(.*)$/);
+    const key = match?.[1]?.toLowerCase();
+    if (match && key && KEYS.has(key)) {
+      keys.set(key, (match[2] ?? "").trim());
+      last = key;
+    } else if (last && segment.trim()) {
+      keys.set(last, `${keys.get(last) ?? ""}; ${segment.trim()}`.trim());
+    }
+  }
+  return keys;
+}
+function parseRows(text) {
+  return text.split("|").map((row) => row.split(",").map((column) => column.trim()).filter(Boolean)).filter((row) => row.length > 0);
+}
+function formatRows(rows) {
+  return rows.map((row) => row.join(", ")).join(" | ");
+}
+function parseSectionDirectives(source) {
+  const found = [];
+  const lines = source.replace(/\r\n/g, `
+`).split(`
+`);
+  lines.forEach((text, index) => {
+    const match = text.match(DIRECTIVE2);
+    if (!match)
+      return;
+    const keys = parseKeys(match[1] ?? "");
+    const rowsText = keys.get("rows");
+    found.push({
+      line: index + 1,
+      entity: keys.get("entity") || undefined,
+      name: keys.get("name") || undefined,
+      help: keys.get("help") || undefined,
+      collapsed: /^(true|yes)$/i.test(keys.get("collapsed") ?? ""),
+      rows: rowsText === undefined ? undefined : parseRows(rowsText),
+      missing: REQUIRED.filter((key) => !keys.get(key))
+    });
+  });
+  return found;
+}
+function sectionsByEntity(directives) {
+  const byEntity = new Map;
+  for (const directive of directives) {
+    if (directive.missing.length > 0 || !directive.entity || !directive.name)
+      continue;
+    const sections = byEntity.get(directive.entity) ?? [];
+    const existing = sections.find((section) => section.name.toLowerCase() === directive.name?.toLowerCase());
+    if (existing) {
+      existing.rows.push(...directive.rows ?? []);
+      existing.lines.push(directive.line);
+      if (!existing.help && directive.help)
+        existing.help = directive.help;
+      existing.collapsed = existing.collapsed || directive.collapsed;
+    } else {
+      sections.push({
+        name: directive.name,
+        help: directive.help,
+        collapsed: directive.collapsed,
+        rows: [...directive.rows ?? []],
+        lines: [directive.line]
+      });
+    }
+    byEntity.set(directive.entity, sections);
+  }
+  return byEntity;
+}
+function placeFields(sections, declared) {
+  const placed = new Map;
+  let order = 0;
+  sections.forEach((section, sectionIndex) => {
+    let rowNo = 0;
+    for (const raw of section.rows) {
+      const row = raw.filter((column) => (!declared || declared.has(column)) && !placed.has(column));
+      if (row.length === 0)
+        continue;
+      rowNo++;
+      const pair = row.slice(0, 2);
+      pair.forEach((column, position) => {
+        placed.set(column, {
+          section: sectionIndex,
+          row: rowNo,
+          column: position === 0 ? 1 : 2,
+          sameLine: position === 1,
+          span: pair.length === 1 ? 2 : 1,
+          order: ++order
+        });
+      });
+      for (const column of row.slice(2)) {
+        rowNo++;
+        placed.set(column, {
+          section: sectionIndex,
+          row: rowNo,
+          column: 1,
+          sameLine: false,
+          span: 2,
+          order: ++order
+        });
+      }
+    }
+  });
+  return placed;
+}
+var UNPLACED_SECTION = "Other";
+
+// packages/generator/src/parsers/section.parser.ts
+function attachFormSections(source, entities) {
+  const byEntity = sectionsByEntity(parseSectionDirectives(source));
+  for (const entity of entities) {
+    const sections = byEntity.get(entity.name);
+    if (!sections || sections.length === 0)
+      continue;
+    entity.formSections = sections.map((section) => ({
+      name: section.name,
+      help: section.help,
+      collapsed: section.collapsed,
+      rows: section.rows.map((row) => [...row])
+    }));
+  }
+}
+function formLayoutFor(entity) {
+  const sections = entity.formSections;
+  if (!sections || sections.length === 0)
+    return;
+  const columns = entity.attributes.map((attribute) => attribute.name).filter((name) => name !== entity.primaryKey);
+  const placements = placeFields(sections.map((section) => ({ ...section, lines: [] })), new Set(columns));
+  const groups = sections.map((section, index) => ({
+    name: section.name,
+    description: section.help,
+    collapsed: section.collapsed,
+    seqNo: (index + 1) * 10,
+    columns: 2
+  }));
+  const fields = new Map;
+  let order = 0;
+  const ordered = [...placements.entries()].sort((a, b) => a[1].order - b[1].order);
+  for (const [column, placement] of ordered) {
+    order = placement.order;
+    fields.set(column, {
+      group: groups[placement.section]?.name ?? UNPLACED_SECTION,
+      seqNo: placement.order * 10,
+      sameLine: placement.sameLine,
+      columnSpan: placement.span
+    });
+  }
+  const unplaced = columns.filter((column) => !fields.has(column));
+  if (unplaced.length > 0) {
+    let name = UNPLACED_SECTION;
+    while (groups.some((group) => group.name.toLowerCase() === name.toLowerCase()))
+      name += " fields";
+    groups.push({
+      name,
+      description: "Fields the model did not place in a section.",
+      collapsed: true,
+      seqNo: (groups.length + 1) * 10,
+      columns: 2
+    });
+    unplaced.forEach((column, index) => {
+      const right = index % 2 === 1;
+      const alone = !right && index === unplaced.length - 1;
+      fields.set(column, {
+        group: name,
+        seqNo: ++order * 10,
+        sameLine: right,
+        columnSpan: alone ? 2 : 1
+      });
+    });
+  }
+  return { groups, fields };
+}
+
+// language/state-field.ts
+var STATE_FIELD_CANDIDATES = ["status", "state", "stage"];
+function stateFieldOf(columns) {
+  const names = new Set(columns);
+  return STATE_FIELD_CANDIDATES.find((candidate) => names.has(candidate));
+}
+var LIFECYCLE_DRAFT = "draft";
+var LIFECYCLE_FINAL = "final";
+var LIFECYCLE_ERROR = "error";
+var DOC_STATUS_COLUMN = "doc_status";
+var REOPEN_EVENT = "reopen";
+var RESERVED_STATE_NAMES = [LIFECYCLE_FINAL, LIFECYCLE_ERROR];
+function draftValueFor(machine) {
+  const own = machine?.states.find((state) => state.name.toLowerCase() === LIFECYCLE_DRAFT);
+  return own?.name ?? LIFECYCLE_DRAFT;
+}
+function lifecycleValuesFor(machine) {
+  if (!machine)
+    return [LIFECYCLE_DRAFT, LIFECYCLE_FINAL, LIFECYCLE_ERROR];
+  const values = [draftValueFor(machine)];
+  for (const state of machine.states) {
+    if (!values.includes(state.name))
+      values.push(state.name);
+  }
+  if (!values.includes(LIFECYCLE_ERROR))
+    values.push(LIFECYCLE_ERROR);
+  return values;
+}
+function normalizeEvent(event) {
+  return event.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+function moveLabel(event, to) {
+  const words = (text) => text.replace(/[_-]+/g, " ").trim();
+  const sentence = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+  if (event && event.trim())
+    return sentence(words(event));
+  return `Move to ${sentence(words(to))}`;
+}
+
 // packages/generator/src/rbac/index.ts
 var RBAC_OPERATIONS = ["create", "read", "update", "delete"];
 var OPERATION_ALIASES = {
@@ -6409,7 +6785,7 @@ var OPERATION_ALIASES = {
   remove: "delete",
   destroy: "delete"
 };
-var DIRECTIVE2 = /^%%rbac\s+(\S+)\s+on\s+([A-Za-z_]\w*)\.([A-Za-z_*]\w*)\s*$/;
+var DIRECTIVE3 = /^%%rbac\s+(\S+)\s+on\s+([A-Za-z_]\w*)\.([A-Za-z_*][\w-]*(?:->[A-Za-z_]\w*)?)\s*$/;
 function parseRoleExpression(expression) {
   const roles = [];
   for (const part of expression.split("|")) {
@@ -6427,17 +6803,28 @@ function compileRbac(source, knownEntities = [], stateMachines = [], onWarn = ()
   const known = new Set(knownEntities);
   const operations = new Map;
   const transitions = new Map;
-  const edgesFor = (entity, event) => {
+  const edgesFor = (entity, target) => {
     const found = [];
+    const arrow = /^([A-Za-z_]\w*)->([A-Za-z_]\w*)$/.exec(target);
     for (const machine of stateMachines) {
       if (machine.entity !== entity)
         continue;
+      const draft = machine.transitions.flatMap((edge) => [edge.from, edge.to]).find((state) => state.toLowerCase() === LIFECYCLE_DRAFT) ?? LIFECYCLE_DRAFT;
       for (const edge of machine.transitions) {
-        if (!edge.trigger)
-          continue;
-        const normalized = edge.trigger.trim().toLowerCase().replace(/[\s-]+/g, "_");
-        if (normalized === event.toLowerCase())
+        if (arrow) {
+          if (edge.from === arrow[1] && edge.to === arrow[2])
+            found.push({ from: edge.from, to: edge.to });
+        } else if (edge.trigger && normalizeEvent(edge.trigger) === normalizeEvent(target)) {
           found.push({ from: edge.from, to: edge.to });
+        }
+      }
+      const finals = machine.terminal ?? [];
+      if (arrow && found.length === 0 && finals.includes(arrow[1]) && arrow[2] === draft) {
+        found.push({ from: arrow[1], to: draft });
+      }
+      if (!arrow && found.length === 0 && normalizeEvent(target) === REOPEN_EVENT) {
+        for (const from of finals)
+          found.push({ from, to: draft });
       }
     }
     return found;
@@ -6447,7 +6834,7 @@ function compileRbac(source, knownEntities = [], stateMachines = [], onWarn = ()
     const line = rawLine.trim();
     if (!line.startsWith("%%rbac"))
       continue;
-    const match = line.match(DIRECTIVE2);
+    const match = line.match(DIRECTIVE3);
     if (!match) {
       onWarn(`Skipping malformed %%rbac directive: ${line}`);
       continue;
@@ -6479,16 +6866,17 @@ function compileRbac(source, knownEntities = [], stateMachines = [], onWarn = ()
     }
     const edges = edgesFor(entity, rawTarget);
     if (edges.length === 0) {
-      onWarn(`%%rbac on ${entity}.${rawTarget} names neither a CRUD operation ` + `(${RBAC_OPERATIONS.join(", ")}, *) nor a transition in ${entity}'s state machine — skipped.`);
+      onWarn(`%%rbac on ${entity}.${rawTarget} names neither a CRUD operation ` + `(${RBAC_OPERATIONS.join(", ")}, *), a move in ${entity}'s state machine, nor ` + `${REOPEN_EVENT} — skipped.`);
       continue;
     }
-    const key = `${entity}:${rawTarget.toLowerCase()}`;
+    const transition = rawTarget.includes("->") ? rawTarget : normalizeEvent(rawTarget);
+    const key = `${entity}:${transition}`;
     const existing = transitions.get(key);
     if (existing) {
       for (const role of roles)
         existing.roles.add(role);
     } else {
-      transitions.set(key, { entity, transition: rawTarget, edges, roles: new Set(roles) });
+      transitions.set(key, { entity, transition, edges, roles: new Set(roles) });
     }
   }
   return {
@@ -6511,7 +6899,7 @@ function compileRbac(source, knownEntities = [], stateMachines = [], onWarn = ()
 // packages/generator/src/reports/index.ts
 var REPORT_CHART_TYPES = ["bar", "line", "pie", "area"];
 var CHART_TYPE_SET = new Set(REPORT_CHART_TYPES);
-var KEYS = ["title", "entity", "chart", "x", "y", "help"];
+var KEYS2 = ["title", "entity", "chart", "x", "y", "help"];
 var READ_ONLY = /^\s*(?:with|select)\b/i;
 function hasStatementBreak(sql) {
   const body = sql.replace(/;\s*$/, "");
@@ -6550,7 +6938,7 @@ function parseReportDirective(line) {
   const name = nameMatch[1];
   const keys = head.slice(nameMatch[0].length);
   const read = (key) => {
-    const stop = KEYS.join("|");
+    const stop = KEYS2.join("|");
     const found = keys.match(new RegExp(`\\b${key}:\\s*(.*?)(?=\\s+(?:${stop}):|$)`, "is"));
     return found?.[1]?.trim() || undefined;
   };
@@ -7431,13 +7819,21 @@ function compileWorkflows(source, knownEntities = [], onWarn = () => {}) {
     if (!initial) {
       onWarn(`Workflow "${section.name}" has no starting state — records will not be stamped.`);
     }
+    for (const reserved of RESERVED_STATE_NAMES) {
+      if (states.has(reserved)) {
+        onWarn(`Workflow "${section.name}" draws a state named "${reserved}", which the record ` + `lifecycle reserves (checker EML509).`);
+      }
+    }
+    if (terminal.length === 0) {
+      onWarn(`Workflow "${section.name}" ends nowhere: no state reaches [*], so no record of ` + `${section.entity} can become Final (checker EML422).`);
+    }
+    const machine = { states: [...states.values()], initial, terminal };
     compiled.push({
       name: section.name,
       entity: section.entity,
-      states: [...states.values()],
+      ...machine,
       transitions,
-      initial,
-      terminal
+      lifecycleValues: lifecycleValuesFor(machine)
     });
   }
   return compiled;
@@ -7458,6 +7854,7 @@ function parseModel(sources) {
   }
   const joined = list.join(`
 `);
+  attachFormSections(joined, entities);
   const categories = resolveCategories(joined, entities.map((entity) => entity.name));
   const warn = (message) => console.warn(`  ⚠️  ${message}`);
   const rules = compileRules(extractRuleSections(joined), warn);
@@ -8115,6 +8512,298 @@ function applyFieldEnumRefs(model) {
 
 // language/checker.ts
 init_language();
+
+// language/field-logic.ts
+var OPERATOR_ALIASES = {
+  "=": "=",
+  "==": "=",
+  "!": "!",
+  "!=": "!",
+  "^": "!",
+  "<>": "!",
+  ">": ">",
+  "<": "<",
+  ">=": ">=",
+  "<=": "<="
+};
+var OPERATOR_TOKENS = ["!=", "<>", ">=", "<=", "==", "=", "!", "^", ">", "<"];
+var VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+function splitConditions(source) {
+  const parts = [];
+  const joins = [];
+  let current = "";
+  let quote = null;
+  let inVariable = false;
+  for (const ch of source) {
+    if (quote) {
+      current += ch;
+      if (ch === quote)
+        quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === "@")
+      inVariable = !inVariable;
+    if (!inVariable && (ch === "&" || ch === "|")) {
+      parts.push(current);
+      joins.push(ch);
+      current = "";
+      continue;
+    }
+    if (!inVariable && (ch === "(" || ch === ")")) {
+      return "Parentheses are not supported: conditions are evaluated left to right.";
+    }
+    current += ch;
+  }
+  if (quote)
+    return "A quoted value is not closed.";
+  if (inVariable)
+    return "A variable is not closed: write it as @column@.";
+  parts.push(current);
+  return { parts, joins };
+}
+function parseOperand(raw) {
+  const text = raw.trim();
+  if (text === "")
+    return { kind: "literal", value: "" };
+  if (text.startsWith("@")) {
+    if (!text.endsWith("@") || text.length < 3)
+      return `"${text}" is not a variable: write @column@.`;
+    const name = text.slice(1, -1).trim();
+    if (!VARIABLE_NAME.test(name))
+      return `"${text}" is not a column name.`;
+    return { kind: "variable", name };
+  }
+  const first = text[0];
+  if (first === "'" || first === '"') {
+    if (text.length < 2 || text[text.length - 1] !== first)
+      return `${text} is not closed.`;
+    return { kind: "literal", value: text.slice(1, -1) };
+  }
+  if (text.includes("@"))
+    return `"${text}" mixes a variable into a value.`;
+  return { kind: "literal", value: text };
+}
+function splitComparison(text) {
+  let quote = null;
+  let inVariable = false;
+  for (let i = 0;i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === quote)
+        quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (ch === "@") {
+      inVariable = !inVariable;
+      continue;
+    }
+    if (inVariable)
+      continue;
+    for (const token of OPERATOR_TOKENS) {
+      if (text.startsWith(token, i)) {
+        return [text.slice(0, i), token, text.slice(i + token.length)];
+      }
+    }
+  }
+  return null;
+}
+function parseLogic(source) {
+  const text = (source ?? "").trim();
+  if (!text)
+    return { ok: false, error: "The expression is empty." };
+  const split = splitConditions(text);
+  if (typeof split === "string")
+    return { ok: false, error: split };
+  const conditions = [];
+  const variables = [];
+  for (const part of split.parts) {
+    const trimmed = part.trim();
+    if (!trimmed)
+      return { ok: false, error: "A condition is missing beside & or |." };
+    const comparison = splitComparison(trimmed);
+    if (!comparison) {
+      return {
+        ok: false,
+        error: `"${trimmed}" has no comparison: write @column@=value, @column@!value, > or <.`
+      };
+    }
+    const [leftRaw, token, rightRaw] = comparison;
+    const left = parseOperand(leftRaw);
+    if (typeof left === "string")
+      return { ok: false, error: left };
+    const right = parseOperand(rightRaw);
+    if (typeof right === "string")
+      return { ok: false, error: right };
+    if (left.kind !== "variable" && right.kind !== "variable") {
+      return { ok: false, error: `"${trimmed}" compares two constants: one side must be @column@.` };
+    }
+    for (const operand of [left, right]) {
+      if (operand.kind === "variable" && !variables.includes(operand.name)) {
+        variables.push(operand.name);
+      }
+    }
+    conditions.push({ left, operator: OPERATOR_ALIASES[token], right });
+  }
+  return { ok: true, logic: { conditions, joins: split.joins, variables } };
+}
+
+// language/move-facts.ts
+var SAGA = /^%%workflow\s+(\w+)\s+entity:\s*(\w+)\s+kind:\s*saga\b.*\btrigger:\s*rule\b/;
+var RULE = /^%%rule\s+(\w+)\s+on\s+(\w+)\b/;
+var STEP = /^%%step\s+\w+\s+(\w+)\b(.*)$/;
+var ACTION = /^%%action\s+\w+\s+trigger-workflow\b.*\bworkflow:\s*(\w+)\s*$/;
+var SECTION_START = /^(?:%%(?:meta\s+name:|workflow\b|rule\b|field\b|section\b|rbac\b|report\b|entity\b|enum\b|category\b|index\b|hook\b|jdm-graph\b)|%% -{2,}|erDiagram\b|stateDiagram(?:-v2)?\b)/;
+var FIELD_HELP = /^(\s*%%field\s+\w+\.\w+_at\s+help:\s*)When the move to (.+?) was recorded on this (.+?)\. Recording it moves .+?: the workflows set the status, which nobody changes by hand\.\s*$/;
+var SECTION_HELP = /help: The times that move this (.+?) along its lifecycle\. Recording one is how its status changes; the status itself is shown in the header\./;
+var HEADER = [
+  "%% ---- The state field is system-managed: each move is a rule and a saga ----",
+  "%% Nobody changes a state by hand. Recording the time a move depends on starts",
+  "%% the saga that sets the state; generated by the state-rule migration."
+];
+var HEADER_NOW = [
+  "%% ---- When each status was reached: stamped by the application ----",
+  "%% A record moves by an action button, along an edge its state diagram draws,",
+  "%% and the application writes the <state>_at time when it does."
+];
+function propsOf(rest) {
+  const props = {};
+  for (const m of rest.matchAll(/(\w+):\s*(\S+)/g))
+    props[m[1]] = m[2];
+  return props;
+}
+function blockEnd(lines, index) {
+  let end = index + 1;
+  while (end < lines.length && !SECTION_START.test(lines[end].trim()))
+    end++;
+  return end;
+}
+function blockStart(lines, index) {
+  let start = index;
+  while (start > 0 && /^%%meta\s+(?:name|kind):/.test(lines[start - 1].trim()))
+    start--;
+  return start;
+}
+function findRetiredMoves(source, stateFieldOf) {
+  const lines = source.split(`
+`);
+  const sections = [];
+  const retiredSagas = new Set;
+  for (let i = 0;i < lines.length; i++) {
+    const saga = SAGA.exec(lines[i].trim());
+    if (!saga)
+      continue;
+    const [, name = "", entity = ""] = saga;
+    const field = stateFieldOf(entity);
+    if (!field)
+      continue;
+    const end = blockEnd(lines, i);
+    let writesState = 0;
+    let other = false;
+    for (let j = i + 1;j < end; j++) {
+      const step = STEP.exec(lines[j].trim());
+      if (!step)
+        continue;
+      const [, type = "", rest = ""] = step;
+      const props = propsOf(rest);
+      const ownEntity = !props.entity || props.entity === entity;
+      if (type === "UpdateEntity" && ownEntity && props.field === field && props.value) {
+        writesState++;
+      } else if (type === "UpdateEntity" && ownEntity && /_at$/.test(props.field ?? "") && props.value === "null") {} else {
+        other = true;
+      }
+    }
+    if (writesState === 1 && !other) {
+      retiredSagas.add(name);
+      sections.push({ kind: "saga", name, entity, line: i + 1, start: blockStart(lines, i), end });
+    }
+  }
+  for (let i = 0;i < lines.length; i++) {
+    const rule = RULE.exec(lines[i].trim());
+    if (!rule)
+      continue;
+    const [, name = "", entity = ""] = rule;
+    const end = blockEnd(lines, i);
+    let actions = 0;
+    let other = false;
+    for (let j = i + 1;j < end; j++) {
+      const text = lines[j].trim();
+      if (!text.startsWith("%%action"))
+        continue;
+      actions++;
+      const action = ACTION.exec(text);
+      if (!action || !retiredSagas.has(action[1]))
+        other = true;
+    }
+    if (actions > 0 && !other) {
+      sections.push({ kind: "rule", name, entity, line: i + 1, start: blockStart(lines, i), end });
+    } else if (actions > 0) {
+      for (let j = i + 1;j < end; j++) {
+        const action = ACTION.exec(lines[j].trim());
+        if (!action || !retiredSagas.has(action[1]))
+          continue;
+        const actionName = /^%%action\s+(\w+)/.exec(lines[j].trim())?.[1] ?? action[1];
+        sections.push({ kind: "action", name: actionName, entity, line: j + 1, start: j, end: j + 1 });
+      }
+    }
+  }
+  const rewrites = [];
+  lines.forEach((text, index) => {
+    const field = FIELD_HELP.exec(text);
+    if (field) {
+      const [, head = "", state = "", noun = ""] = field;
+      rewrites.push({
+        line: index + 1,
+        replacement: `${head}When this ${noun} moved to ${state}. Stamped by the application when the move is made; nobody types it.`
+      });
+      return;
+    }
+    const section = SECTION_HELP.exec(text);
+    if (section) {
+      rewrites.push({
+        line: index + 1,
+        replacement: text.replace(SECTION_HELP, `help: When this ${section[1]} reached each status, stamped by the application as the record moves; the status itself is shown in the header.`)
+      });
+      return;
+    }
+    const header = HEADER.indexOf(text.trim());
+    if (header >= 0) {
+      rewrites.push({
+        line: index + 1,
+        replacement: text.replace(HEADER[header], HEADER_NOW[header])
+      });
+    }
+  });
+  sections.sort((a, b) => a.start - b.start);
+  return { sections, rewrites };
+}
+function sectionSpan(lines, index) {
+  const text = lines[index]?.trim() ?? "";
+  if (ACTION.test(text))
+    return { start: index, end: index + 1 };
+  if (!SAGA.test(text) && !RULE.test(text))
+    return;
+  return { start: blockStart(lines, index), end: blockEnd(lines, index) };
+}
+function rewriteStockHelp(lines) {
+  const { rewrites } = findRetiredMoves(lines.join(`
+`), () => {
+    return;
+  });
+  for (const rewrite of rewrites)
+    lines[rewrite.line - 1] = rewrite.replacement;
+  return rewrites.length;
+}
+
+// language/checker.ts
 var useColor = typeof process !== "undefined" && !process.env?.NO_COLOR && Boolean(process.stdout?.isTTY) && !hasFlag("--no-color");
 function hasFlag(name) {
   return typeof process !== "undefined" && (process.argv?.includes(name) ?? false);
@@ -8124,6 +8813,10 @@ class SourceIndex {
   lines;
   constructor(source) {
     this.lines = source.split(`
+`);
+  }
+  text() {
+    return this.lines.join(`
 `);
   }
   findLine(pattern, startLine = 1) {
@@ -8227,6 +8920,7 @@ function isForeignKeyColumnName(columnName) {
 class CheckEngine {
   model;
   issues = [];
+  sagaWrites = new Set;
   src;
   def = loadLanguageDefinition();
   validHookTypes;
@@ -8242,7 +8936,18 @@ class CheckEngine {
     "description",
     "parent"
   ]);
-  validFieldKeys = new Set(["enum", "ui", "default", "min", "max", "help", "format"]);
+  validFieldKeys = new Set([
+    "enum",
+    "ui",
+    "default",
+    "min",
+    "max",
+    "help",
+    "format",
+    "display",
+    "readonly",
+    "mandatory"
+  ]);
   validMetaKeys = new Set(["name", "kind", "version", "entity", "stack", "description"]);
   validWorkflowKinds = new Set(["hook", "state", "saga"]);
   validTriggerSources = /^(cron:|webhook:|message:)/;
@@ -8286,6 +8991,7 @@ class CheckEngine {
     this.checkCategoryDirectives();
     this.checkLineItems();
     this.checkHelpText();
+    this.checkSectionDirectives();
     this.checkHooks();
     this.checkAutomationTriggers();
     this.checkGuards();
@@ -8593,6 +9299,55 @@ class CheckEngine {
       }
     }
   }
+  checkFieldLogic(entityName, attrName, key, expression, lineNo) {
+    const parsed = parseLogic(expression);
+    if (!parsed.ok) {
+      this.error("EML156", `%%field ${entityName}.${attrName} ${key}: does not parse — ${parsed.error}`, {
+        line: lineNo,
+        hint: "Write Compiere logic: @column@=value, @column@!value (not equal), >, <, >=, <=, joined by & and | and read left to right. A Yes/No column is Y or N; an empty value is ''.",
+        context: expression
+      });
+      return;
+    }
+    const entity = this.model.entities.find((candidate) => candidate.name === entityName);
+    if (!entity)
+      return;
+    const columns = new Set(entity.attributes.map((attribute) => attribute.name));
+    for (const variable of parsed.logic.variables) {
+      if (!columns.has(variable)) {
+        this.error("EML157", `%%field ${entityName}.${attrName} ${key}: reads @${variable}@, which ${entityName} does not declare.`, {
+          line: lineNo,
+          hint: `Field logic reads the record being edited, so it can name only ${entityName}'s own columns: ${[...columns].join(", ")}.`
+        });
+      }
+    }
+    if (key === "display" && parsed.logic.variables.includes(attrName)) {
+      this.warn("EML158", `%%field ${entityName}.${attrName} display: depends on its own value.`, {
+        line: lineNo,
+        hint: "A field hidden by its own value can never be shown again from the form, because nobody can see it to change it. Make it depend on another column."
+      });
+    }
+  }
+  checkFieldLogicTargets(entityAttrMap) {
+    const stateFields = this.stateFields();
+    for (const { lineNo, text } of this.src.findAll(/^\s*%%field\b/)) {
+      const m = text.trim().match(/^%%field\s+(\w+)\.(\w+)\s+(display|readonly|mandatory)\s*:/);
+      if (!m)
+        continue;
+      const [entityName, attrName, key] = caps(m, 3);
+      if (!entityAttrMap.get(entityName)?.has(attrName))
+        continue;
+      const entity = this.model.entities.find((candidate) => candidate.name === entityName);
+      const isKey = entity?.primaryKey === attrName;
+      const isState = stateFields.get(entityName) === attrName;
+      if (!isKey && !isState)
+        continue;
+      this.warn("EML159", `%%field ${entityName}.${attrName} ${key}: is on ${isKey ? "the primary key" : "the state field"}, which is never an input.`, {
+        line: lineNo,
+        hint: isKey ? "The key is on no form. Put the logic on the column a person fills in." : "The state field is system-managed: shown read-only in the record header and written only by workflows. Logic may read it (@" + attrName + "@=…) on other fields, but cannot be placed on it."
+      });
+    }
+  }
   checkFieldDirectives() {
     const entityNames = new Set(this.model.entities.map((e) => e.name));
     const enumNames = new Set(this.model.enums.map((e) => e.name));
@@ -8600,7 +9355,7 @@ class CheckEngine {
     for (const e of this.model.entities) {
       entityAttrMap.set(e.name, new Set(e.attributes.map((a) => a.name)));
     }
-    const fieldLines = this.src.findAll(/^%%field\b/);
+    const fieldLines = this.src.findAll(/^\s*%%field\b/);
     for (const { lineNo, text } of fieldLines) {
       const m = text.trim().match(/^%%field\s+(\w+)\.(\w+)\s+([A-Za-z_]\w*)\s*:\s*(.+)$/);
       if (!m) {
@@ -8644,7 +9399,11 @@ class CheckEngine {
           hint: `${key}: should be a number, e.g.  ${key}: 0`
         });
       }
+      if (key === "display" || key === "readonly" || key === "mandatory") {
+        this.checkFieldLogic(entityName, attrName, key, value.trim(), lineNo);
+      }
     }
+    this.checkFieldLogicTargets(entityAttrMap);
     const boundFields = new Set(this.src.findAll(/^\s*%%field\s+\w+\.\w+\s+enum\s*:/).map(({ text }) => {
       const m = text.trim().match(/^%%field\s+(\w+)\.(\w+)/);
       return m ? `${m[1]}.${m[2]}` : "";
@@ -8803,6 +9562,36 @@ class CheckEngine {
         hint: `A category lists what the dashboard shows, and a child has no card — it is reached by opening a ${parent}. Remove "${child}" from the entities: list.`
       });
     }
+    const effective = new Map;
+    for (const [child, parent] of parents) {
+      const entity = declared.get(child);
+      if (!entity || parent === child || !declared.has(parent))
+        continue;
+      if (this.linkColumnTo(entity, parent))
+        effective.set(child, parent);
+    }
+    const depth = (name) => {
+      let levels = 0;
+      const seen = new Set;
+      for (let current = effective.get(name);current !== undefined && !seen.has(current); current = effective.get(current)) {
+        seen.add(current);
+        levels++;
+      }
+      return levels;
+    };
+    const children = new Map(effective);
+    for (const child of [...effective.keys()].sort((a, b) => depth(a) - depth(b))) {
+      const parent = effective.get(child);
+      const grandparent = children.get(parent);
+      if (!grandparent)
+        continue;
+      children.delete(child);
+      const link = this.linkColumnTo(declared.get(child), parent);
+      this.info("EML155", `"${child}" is a line item of "${parent}", which is itself a line item of "${grandparent}", so "${child}" is generated as a top-level entity.`, {
+        line: this.src.findLine(new RegExp(`^\\s*%%entity\\s+${child}\\s+parent\\s*:`)),
+        hint: `A line item's tab sits one level inside a top-level entity's window; there is no third level. ` + `"${child}" keeps its foreign key ${link?.name} but gets a window and a dashboard card of its own, and the ${parent} page does not list it. ` + `If that is what you want, remove the \`parent:\` directive and the note goes; ` + `to list it under "${grandparent}" instead, give it a foreign key to "${grandparent}" and declare \`parent: ${grandparent}\`.`
+      });
+    }
     const LINE_ITEM_NOUNS = /(Line|LineItem|Item|Detail|Entry|Row)s?$/;
     for (const entity of this.model.entities) {
       if (parents.has(entity.name))
@@ -8914,6 +9703,115 @@ class CheckEngine {
       }
     }
   }
+  restatedSectionHelp(name, text) {
+    const own = this.nameAsWords(name);
+    const body = text.trim().replace(/\.+$/, "").trim().toLowerCase().replace(/^(the|all)\s+/, "").replace(/\s+(fields?|information|info|details|data|section|columns?)$/, "").trim();
+    return body === own || body === "";
+  }
+  checkSectionDirectives() {
+    const directives = parseSectionDirectives(this.src.text());
+    const declared = new Map(this.model.entities.map((entity) => [entity.name, entity]));
+    for (const directive of directives) {
+      if (directive.missing.length > 0) {
+        this.error("EML171", `%%section is missing ${directive.missing.map((key) => `\`${key}:\``).join(", ")}.`, {
+          line: directive.line,
+          hint: "Syntax: %%section entity: <Entity>; name: <Label>; help: <what this section is for>; rows: <column>, <column> | <column>. Rows are separated by `|`, the one or two columns of a row by `,`."
+        });
+        continue;
+      }
+      if (directive.entity && !declared.has(directive.entity)) {
+        this.error("EML173", `%%section names entity "${directive.entity}", which is not declared.`, {
+          line: directive.line,
+          hint: "Use the entity's name exactly as the erDiagram declares it — it is case-sensitive, like every other directive's."
+        });
+      }
+    }
+    const byEntity = sectionsByEntity(directives);
+    const stateFieldsByEntity = this.stateFields();
+    for (const entity of this.model.entities) {
+      const entityLine = this.src.findLine(new RegExp(`^\\s*${entity.name}\\s*\\{`));
+      const sections = byEntity.get(entity.name);
+      const stateField = stateFieldsByEntity.get(entity.name);
+      const columns = entity.attributes.filter((attribute) => !attribute.isPrimaryKey && attribute.name !== stateField);
+      if (!sections || sections.length === 0) {
+        if (columns.length === 0)
+          continue;
+        this.warn("EML170", `Entity "${entity.name}" declares no %%section, so its form is one flat list.`, {
+          line: entityLine,
+          hint: `Add \`%%section entity: ${entity.name}; name: <Label>; help: …; rows: <a>, <b> | <c>\` lines placing every column but the key — two per row, a row of one for text that needs the width. The sections are the form a person uses all day, and the model is the only place they are decided.`
+        });
+        continue;
+      }
+      const known = new Set(entity.attributes.map((attribute) => attribute.name));
+      const key = entity.attributes.find((attribute) => attribute.isPrimaryKey)?.name;
+      const placed = new Set;
+      for (const section of sections) {
+        if (!section.help) {
+          this.warn("EML177", `%%section "${entity.name}.${section.name}" has no help:.`, {
+            line: section.lines[0],
+            hint: "Add `help: …` — what this part of the form is for, and what has to be true before it is complete. It is printed under the section's heading."
+          });
+        } else if (this.restatedSectionHelp(section.name, section.help)) {
+          this.warn("EML177", `%%section "${entity.name}.${section.name}" help: restates its name.`, {
+            line: section.lines[0],
+            hint: `"${section.help.trim().slice(0, 60)}" repeats the heading. Say what the person filling it in is doing there.`
+          });
+        }
+      }
+      for (const directive of directives) {
+        if (directive.entity !== entity.name || !directive.rows)
+          continue;
+        for (const row of directive.rows) {
+          if (row.length > 2) {
+            this.error("EML174", `%%section row "${row.join(", ")}" of ${entity.name} has ${row.length} columns; a row holds one or two.`, {
+              line: directive.line,
+              hint: "The form is a two-column grid. Split the row with `|` — pair what is filled in together, and give a long column a row of its own."
+            });
+          }
+          for (const column of row) {
+            if (column === key) {
+              this.error("EML176", `%%section places "${entity.name}.${column}", the primary key.`, {
+                line: directive.line,
+                hint: "The key is a generated uuid that no form shows. Leave it out of every row."
+              });
+              continue;
+            }
+            if (!known.has(column)) {
+              const near = [...known].find((name) => name.toLowerCase() === column.toLowerCase().replace(/\s+/g, "_"));
+              this.error("EML176", `%%section places "${entity.name}.${column}", which ${entity.name} does not declare.`, {
+                line: directive.line,
+                hint: near ? `Did you mean \`${near}\`? Rows name columns exactly as the erDiagram declares them.` : `Rows name columns of ${entity.name} exactly as the erDiagram declares them: ${[...known].filter((name) => name !== key).join(", ")}.`
+              });
+              continue;
+            }
+            if (column === stateField) {
+              this.warn("EML178", `%%section places "${entity.name}.${column}", the state field, in the form body.`, {
+                line: directive.line,
+                hint: `Remove ${column} from the row. The state is shown read-only in the header of ${entity.name}'s form and as a column of its list, and only background workflows change it — a field in the body would offer a change nobody may make.`
+              });
+              continue;
+            }
+            if (placed.has(column)) {
+              this.warn("EML175", `"${entity.name}.${column}" is placed in two %%section rows.`, {
+                line: directive.line,
+                hint: "A field appears once on a form. The first placement is used; remove this one."
+              });
+              continue;
+            }
+            placed.add(column);
+          }
+        }
+      }
+      const unplaced = columns.map((attribute) => attribute.name).filter((name) => !placed.has(name));
+      if (unplaced.length > 0) {
+        const last = sections[sections.length - 1];
+        this.warn("EML172", `${entity.name} leaves ${unplaced.length} column${unplaced.length === 1 ? "" : "s"} out of every %%section: ${unplaced.join(", ")}.`, {
+          line: last?.lines[last.lines.length - 1],
+          hint: `Place ${unplaced.join(", ")} in the row ${unplaced.length === 1 ? "it belongs" : "they belong"} to. Unplaced columns are generated into a collapsed "${UNPLACED_SECTION}" section at the end of the form, which nobody designed.`
+        });
+      }
+    }
+  }
   checkHooks() {
     const entityNames = new Set(this.model.entities.map((e) => e.name));
     const entityAttrMap = new Map;
@@ -8963,6 +9861,21 @@ class CheckEngine {
       }
     }
   }
+  stateFields() {
+    const fields = new Map;
+    for (const wf of this.model.workflows) {
+      if (wf.kind !== "state" || !wf.entity)
+        continue;
+      const entity = this.model.entities.find((candidate) => candidate.name === wf.entity);
+      const field = entity && stateFieldOf(entity.attributes.map((attribute) => attribute.name));
+      if (field)
+        fields.set(wf.entity, field);
+    }
+    return fields;
+  }
+  finalStates(entity) {
+    return this.model.workflows.filter((wf) => wf.entity === entity && wf.kind === "state").flatMap((wf) => wf.transitions.filter((t) => t.to === "[*]").map((t) => t.from));
+  }
   checkRbac() {
     const entityNames = new Set(this.model.entities.map((e) => e.name));
     const crudOps = new Set([
@@ -8984,20 +9897,22 @@ class CheckEngine {
       "all",
       "any"
     ]);
-    const eventsFor = (entity) => {
-      const events = new Set;
+    const movesOf = (entity) => {
+      const moves = [];
       for (const wf of this.model.workflows) {
         if (wf.entity !== entity || wf.kind !== "state")
           continue;
         for (const t of wf.transitions) {
-          if (t.event)
-            events.add(t.event.trim().toLowerCase().replace(/[\s-]+/g, "_"));
+          if (t.from === "[*]" || t.to === "[*]")
+            continue;
+          moves.push({ workflow: wf.name, from: t.from, to: t.to, event: t.event });
         }
       }
-      return events;
+      return moves;
     };
+    const guarded = new Set;
     for (const { lineNo, text } of this.src.findAll(/^\s*%%rbac\b/)) {
-      const m = text.trim().match(/^%%rbac\s+(\S+)\s+on\s+([A-Za-z_]\w*)\.([A-Za-z_*]\w*)\s*$/);
+      const m = text.trim().match(/^%%rbac\s+(\S+)\s+on\s+([A-Za-z_]\w*)\.([A-Za-z_*][\w-]*(?:->[A-Za-z_]\w*)?)\s*$/);
       if (!m) {
         this.error("EML210", `Invalid %%rbac syntax: "${text.trim()}"`, {
           line: lineNo,
@@ -9031,12 +9946,37 @@ class CheckEngine {
       const lower = target.toLowerCase();
       if (crudOps.has(lower))
         continue;
-      const events = eventsFor(entity);
-      if (events.has(lower))
+      const moves = movesOf(entity);
+      const arrow = /^(\w+)->(\w+)$/.exec(target);
+      const named = arrow ? moves.filter((move) => move.from === arrow[1] && move.to === arrow[2]) : moves.filter((move) => move.event && normalizeEvent(move.event) === normalizeEvent(target));
+      if (named.length > 0) {
+        for (const move of named)
+          guarded.add(`${entity}:${move.from}->${move.to}`);
         continue;
-      this.error("EML214", `%%rbac on ${entity}.${target} names neither a CRUD operation nor a transition of ${entity}.`, {
+      }
+      const finals = this.finalStates(entity);
+      if (arrow && finals.includes(arrow[1]) && arrow[2].toLowerCase() === LIFECYCLE_DRAFT)
+        continue;
+      if (!arrow && normalizeEvent(target) === REOPEN_EVENT && finals.length > 0)
+        continue;
+      const offered = [
+        ...new Set(moves.map((move) => move.event ? normalizeEvent(move.event) : `${move.from}->${move.to}`))
+      ];
+      this.error("EML214", `%%rbac on ${entity}.${target} names neither a CRUD operation nor a move of ${entity}.`, {
         line: lineNo,
-        hint: events.size ? `Use one of create, read, update, delete, * — or a transition of ${entity}: ${[...events].join(", ")}.` : `Use one of create, read, update, delete, * — ${entity} declares no state machine to take a transition from.`
+        hint: offered.length ? `Use one of create, read, update, delete, * — or a move of ${entity}: ${offered.join(", ")}, ${REOPEN_EVENT}.` : `Use one of create, read, update, delete, * — ${entity} declares no state machine to move along.`
+      });
+    }
+    for (const wf of this.model.workflows) {
+      if (wf.kind !== "state" || !wf.entity || !entityNames.has(wf.entity))
+        continue;
+      const open = movesOf(wf.entity).filter((move) => move.workflow === wf.name && !guarded.has(`${wf.entity}:${move.from}->${move.to}`));
+      if (open.length === 0)
+        continue;
+      const names = open.map((move) => move.event ? normalizeEvent(move.event) : `${move.from}->${move.to}`);
+      this.info("EML511", `${open.length} move${open.length === 1 ? "" : "s"} of "${wf.name}" ${open.length === 1 ? "is" : "are"} open to anyone who may update ${wf.entity}: ${[...new Set(names)].join(", ")}.`, {
+        line: this.src.findLine(new RegExp(`^%%workflow\\s+${wf.name}\\b`)),
+        hint: `To limit a button to the roles that own it, add  %%rbac role:<role> on ${wf.entity}.<move>  — the move is its event, or from->to for an edge with no label.`
       });
     }
   }
@@ -9312,6 +10252,10 @@ class CheckEngine {
           });
         }
         const has = (key) => (props[key] ?? "").trim().length > 0;
+        if (typeName === "UpdateEntity" && has("field") && has("value")) {
+          const target = (props.entity ?? section.entity).trim();
+          this.sagaWrites.add(`${target}.${props.field.trim()}=${props.value.trim()}`);
+        }
         const missing = [];
         for (const key of contract.required ?? []) {
           if (!has(key))
@@ -9415,6 +10359,18 @@ class CheckEngine {
             line: lineNo,
             hint: "Set targetSource to a context key holding the row id, or targetField to a foreign key column. The executor refuses this rather than guessing a row."
           });
+        }
+        if ((typeName === "UpdateEntity" || typeName === "DeleteEntity") && entityProp && !has("targetSource") && has("targetField") && props.targetField.trim() !== "id") {
+          const wanted = entityProp.toLowerCase().replace(/^bus_/, "");
+          const target = this.model.entities.find((candidate) => candidate.name.toLowerCase() === wanted || candidate.name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase() === wanted);
+          const column = props.targetField.trim();
+          if (target && !target.attributes.some((attribute) => attribute.name === column)) {
+            const ownColumn = trigger?.attributes.some((attribute) => attribute.name === column);
+            this.error("EML275", `%%step ${nodeId} (${typeName}) matches ${target.name}.${column}, which ${target.name} does not declare.`, {
+              line: lineNo,
+              hint: ownColumn ? `${column} is a column of the record that started the workflow. To reach the ${target.name} it names, write  targetSource: ${column}  (and drop targetField, which defaults to id).` : `targetField is a column of ${target.name} matched against the triggering record's id — a foreign key on ${target.name} pointing back at it. To reach a ${target.name} the triggering record names, use targetSource with that column.`
+            });
+          }
         }
         const reference = props.targetSource?.trim();
         if (reference && !published.has(reference)) {
@@ -9885,6 +10841,50 @@ class CheckEngine {
         }
       }
     }
+    const stateFields = this.stateFields();
+    for (const wf of this.model.workflows) {
+      if (wf.kind !== "state" || !wf.entity)
+        continue;
+      for (const state of new Set([...wf.states, ...wf.transitions.flatMap((t) => [t.from, t.to])])) {
+        if (!RESERVED_STATE_NAMES.includes(state))
+          continue;
+        this.error("EML509", `State workflow "${wf.name}" draws a state named "${state}", which the record lifecycle reserves.`, {
+          line: this.src.findLine(new RegExp(`^\\s*(?:\\w+\\s*-->\\s*)?${state}\\b`)),
+          hint: `Rename it (e.g. ${state === "final" ? "completed" : "failed"}). Every state that ends the diagram (x --> [*]) is already Final, and Error is where a record whose workflows failed goes.`
+        });
+      }
+    }
+    for (const section of findRetiredMoves(this.src.text(), (entity) => stateFields.get(entity)).sections) {
+      this.warn("EML512", section.kind === "saga" ? `Saga "${section.name}" only moves ${section.entity} to a state; an action button makes that move now.` : section.kind === "action" ? `Action "${section.name}" only starts a move saga for ${section.entity}; an action button makes that move now.` : `Rule "${section.name}" only starts move sagas for ${section.entity}; an action button makes those moves now.`, {
+        line: section.line,
+        hint: "Remove it — the fixer does. The <state>_at columns stay: the application stamps them when the record reaches the state."
+      });
+    }
+    for (const write of this.sagaWrites) {
+      const match = write.match(/^(\w+)\.(\w+)=(.+)$/);
+      if (!match)
+        continue;
+      const [, entity = "", field = "", value = ""] = match;
+      if (stateFields.get(entity) !== field)
+        continue;
+      const drawn = new Set;
+      for (const wf of this.model.workflows) {
+        if (wf.kind !== "state" || wf.entity !== entity)
+          continue;
+        for (const state of wf.states)
+          drawn.add(state);
+        for (const t of wf.transitions) {
+          drawn.add(t.from);
+          drawn.add(t.to);
+        }
+      }
+      if (!drawn.has(value)) {
+        this.warn("EML508", `A saga writes ${entity}.${field} = ${value}, a state ${entity}'s state machine does not draw.`, {
+          line: this.src.findLine(new RegExp(`UpdateEntity\\b.*\\bfield:\\s*${field}\\b.*\\bvalue:\\s*${value}\\b`)),
+          hint: `Draw ${value} in ${entity}'s stateDiagram-v2 with an edge into it, or write one of its states.`
+        });
+      }
+    }
     for (const entity of this.model.entities) {
       for (const attr of entity.attributes) {
         if (attr.enumRef && !enumNames.has(attr.enumRef)) {
@@ -9965,7 +10965,12 @@ var AUTO_FIXABLE_CODES = new Set([
   "EML114",
   "EML112",
   "EML103",
-  "EML287"
+  "EML287",
+  "EML172",
+  "EML174",
+  "EML175",
+  "EML178",
+  "EML512"
 ]);
 if (false) {}
 
@@ -10011,10 +11016,142 @@ function applyFix(lines, issue) {
       return fixMissingTerminalTransition(lines, issue, base);
     case "EML287":
       return fixCamelCaseRuleCondition(lines, issue, base);
+    case "EML172":
+      return fixUnplacedColumns(lines, issue, base);
+    case "EML174":
+      return fixWideRow(lines, issue, base);
+    case "EML175":
+      return fixDoublePlacement(lines, issue, base);
+    case "EML178":
+      return fixPlacedStateField(lines, issue, base);
+    case "EML512":
+      return fixRetiredMove(lines, issue, base);
     default:
       base.description = `No auto-fix strategy for ${issue.code}.`;
       return base;
   }
+}
+function rowsSpan(text) {
+  if (!/^\s*%%section\b/i.test(text))
+    return;
+  const open = text.match(/(^|;)\s*rows\s*:/i);
+  if (open?.index === undefined)
+    return;
+  const start = open.index + open[0].length;
+  const rest = text.slice(start);
+  const close = rest.match(/;\s*(entity|name|help|collapsed)\s*:/i);
+  return { start, end: close?.index === undefined ? text.length : start + close.index };
+}
+function rewriteRows(lines, issue, base, change, description) {
+  const index = (issue.line ?? 0) - 1;
+  const before = lines[index];
+  const span = before === undefined ? undefined : rowsSpan(before);
+  if (before === undefined || !span) {
+    base.description = `Line ${issue.line ?? "?"} is not a %%section with rows:; left alone.`;
+    return base;
+  }
+  const rows = change(parseRows(before.slice(span.start, span.end)));
+  if (!rows) {
+    base.description = `Nothing to change on line ${issue.line}.`;
+    return base;
+  }
+  const after = `${before.slice(0, span.start)} ${formatRows(rows)}${before.slice(span.end)}`;
+  lines[index] = after;
+  base.applied = true;
+  base.description = description;
+  base.changes = [{ lineNo: index + 1, before, after, action: "replace" }];
+  return base;
+}
+function fixUnplacedColumns(lines, issue, base) {
+  const match = issue.message.match(/^(\w+) leaves \d+ columns? out of every %%section: (.+)\.$/);
+  if (!match?.[2]) {
+    base.description = "Could not read the unplaced columns from the issue message.";
+    return base;
+  }
+  const columns = match[2].split(",").map((column) => column.trim()).filter(Boolean);
+  const added = [];
+  for (let i = 0;i < columns.length; i += 2)
+    added.push(columns.slice(i, i + 2));
+  return rewriteRows(lines, issue, base, (rows) => [...rows, ...added], `Placed ${columns.join(", ")} in ${match[1]}'s last section, two per row — move them to where they belong.`);
+}
+function fixWideRow(lines, issue, base) {
+  return rewriteRows(lines, issue, base, (rows) => {
+    if (!rows.some((row) => row.length > 2))
+      return;
+    return rows.flatMap((row) => {
+      const pairs = [];
+      for (let i = 0;i < row.length; i += 2)
+        pairs.push(row.slice(i, i + 2));
+      return pairs;
+    });
+  }, "Split a row of more than two columns into rows of two.");
+}
+function fixDoublePlacement(lines, issue, base) {
+  const match = issue.message.match(/^"\w+\.(\w+)" is placed in two %%section rows\.$/);
+  const column = match?.[1];
+  if (!column) {
+    base.description = "Could not read the column from the issue message.";
+    return base;
+  }
+  return rewriteRows(lines, issue, base, (rows) => {
+    let rowIndex = -1;
+    let colIndex = -1;
+    rows.forEach((row, r) => row.forEach((name, c) => {
+      if (name === column) {
+        rowIndex = r;
+        colIndex = c;
+      }
+    }));
+    if (rowIndex < 0)
+      return;
+    const next = rows.map((row) => [...row]);
+    next[rowIndex]?.splice(colIndex, 1);
+    return next.filter((row) => row.length > 0);
+  }, `Removed the second placement of "${column}".`);
+}
+function fixPlacedStateField(lines, issue, base) {
+  const match = issue.message.match(/^%%section places "\w+\.(\w+)", the state field/);
+  const column = match?.[1];
+  if (!column) {
+    base.description = "Could not read the state field from the issue message.";
+    return base;
+  }
+  const index = (issue.line ?? 0) - 1;
+  const before = lines[index];
+  const span = before === undefined ? undefined : rowsSpan(before);
+  if (before === undefined || !span) {
+    base.description = `Line ${issue.line ?? "?"} is not a %%section with rows:; left alone.`;
+    return base;
+  }
+  const rows = parseRows(before.slice(span.start, span.end)).map((row) => row.filter((name) => name !== column)).filter((row) => row.length > 0);
+  if (rows.length === 0) {
+    lines.splice(index, 1);
+    base.applied = true;
+    base.description = `Removed the section that placed only "${column}"; the state is shown in the form's header.`;
+    base.changes = [{ lineNo: index + 1, before, after: "", action: "delete" }];
+    return base;
+  }
+  return rewriteRows(lines, issue, base, () => rows, `Removed "${column}" from the section; the state is shown read-only in the form's header.`);
+}
+function fixRetiredMove(lines, issue, base) {
+  const index = (issue.line ?? 0) - 1;
+  const span = sectionSpan(lines, index);
+  if (!span) {
+    base.description = `Line ${issue.line ?? "?"} is not a move rule or saga; left alone.`;
+    return base;
+  }
+  const name = lines[index].trim().split(/\s+/)[1];
+  const removed = lines.splice(span.start, span.end - span.start);
+  const rewritten = rewriteStockHelp(lines);
+  base.applied = true;
+  base.description = `Removed ${name} (${removed.length} lines); an action button makes this move now.` + (rewritten ? ` Rewrote ${rewritten} help line${rewritten === 1 ? "" : "s"} on the <state>_at columns.` : "");
+  base.changes = removed.map((before, offset) => ({
+    lineNo: span.start + offset + 1,
+    before,
+    after: "",
+    action: "delete"
+  }));
+  return base;
 }
 function fixMissingMetaName(lines, _issue, base) {
   let name = "EML Model";
@@ -10583,6 +11720,9 @@ CREATE TABLE IF NOT EXISTS sys_field_group (
   sys_field_group_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   sys_tab_id UUID REFERENCES sys_tab(sys_tab_id),
   name VARCHAR(100) NOT NULL,
+  description TEXT,
+  columns INTEGER DEFAULT 1,
+  is_collapsed_by_default BOOLEAN DEFAULT false,
   seq_no INTEGER DEFAULT 0,
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -10612,11 +11752,33 @@ CREATE TABLE IF NOT EXISTS sys_field (
   display_logic TEXT,
   is_key BOOLEAN DEFAULT false,
   is_parent BOOLEAN DEFAULT false,
+  is_same_line BOOLEAN DEFAULT false,
+  column_span INTEGER,
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(sys_tab_id, sys_column_id)
 );
+
+-- \`%%section\` layout. In the CREATE above for a new database, and added here
+-- for one a tab wrote before sections existed: the schema is re-run on every
+-- boot and only ever adds.
+ALTER TABLE sys_field_group ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE sys_field_group ADD COLUMN IF NOT EXISTS columns INTEGER DEFAULT 1;
+ALTER TABLE sys_field_group ADD COLUMN IF NOT EXISTS is_collapsed_by_default BOOLEAN DEFAULT false;
+ALTER TABLE sys_field ADD COLUMN IF NOT EXISTS is_same_line BOOLEAN DEFAULT false;
+-- X and Y Position are gone from the dictionary: a form is laid out by Sequence,
+-- Same Line and Column Span alone. A database written before that loses them here.
+ALTER TABLE sys_field DROP COLUMN IF EXISTS x_position;
+ALTER TABLE sys_field DROP COLUMN IF EXISTS y_position;
+ALTER TABLE sys_field ADD COLUMN IF NOT EXISTS column_span INTEGER;
+-- Field logic: Compiere's Display, Read Only and Mandatory Logic. Display is the
+-- field's alone; read-only and mandatory are the column's, repeated on the field.
+ALTER TABLE sys_field ADD COLUMN IF NOT EXISTS display_logic TEXT;
+ALTER TABLE sys_field ADD COLUMN IF NOT EXISTS read_only_logic TEXT;
+ALTER TABLE sys_field ADD COLUMN IF NOT EXISTS mandatory_logic TEXT;
+ALTER TABLE sys_column ADD COLUMN IF NOT EXISTS read_only_logic TEXT;
+ALTER TABLE sys_column ADD COLUMN IF NOT EXISTS mandatory_logic TEXT;
 
 CREATE TABLE IF NOT EXISTS sys_category (
   sys_category_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -12699,6 +13861,273 @@ export function test(source, scope = {}) {
 
 export { FUNCTIONS };
 `,
+  "server/lib/field-logic.js": `/**
+ * Field logic — Compiere's Display Logic, Read Only Logic and Mandatory Logic,
+ * for the browser application.
+ *
+ * The JavaScript twin of language/field-logic.ts, which is the one reading of
+ * the syntax (\`@column@=value\`, \`!\` for not equal, \`>\`, \`<\`, \`>=\`, \`<=\`, joined
+ * by \`&\` and \`|\` and read left to right). This runtime is plain JavaScript with
+ * no build step, so it carries its own copy; \`browser-runtime-field-logic.test.ts\`
+ * runs the same cases through both and fails if they disagree. Change the
+ * TypeScript first, then this.
+ *
+ * Imported by the server (bus.routes.js enforces mandatory and read-only logic
+ * on every write) and by the form (ui/views/entity-form.js shows, locks and
+ * requires fields as the record is edited) — one copy for both sides of the
+ * Service Worker.
+ */
+
+const OPERATOR_ALIASES = {
+  "=": "=",
+  "==": "=",
+  "!": "!",
+  "!=": "!",
+  "^": "!",
+  "<>": "!",
+  ">": ">",
+  "<": "<",
+  ">=": ">=",
+  "<=": "<="
+};
+const OPERATOR_TOKENS = ["!=", "<>", ">=", "<=", "==", "=", "!", "^", ">", "<"];
+const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+function splitConditions(source) {
+  const parts = [];
+  const joins = [];
+  let current = "";
+  let quote = null;
+  let inVariable = false;
+  for (const ch of source) {
+    if (quote) {
+      current += ch;
+      if (ch === quote)
+        quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === "@")
+      inVariable = !inVariable;
+    if (!inVariable && (ch === "&" || ch === "|")) {
+      parts.push(current);
+      joins.push(ch);
+      current = "";
+      continue;
+    }
+    if (!inVariable && (ch === "(" || ch === ")")) {
+      return "Parentheses are not supported: conditions are evaluated left to right.";
+    }
+    current += ch;
+  }
+  if (quote)
+    return "A quoted value is not closed.";
+  if (inVariable)
+    return "A variable is not closed: write it as @column@.";
+  parts.push(current);
+  return { parts, joins };
+}
+function parseOperand(raw) {
+  const text = raw.trim();
+  if (text === "")
+    return { kind: "literal", value: "" };
+  if (text.startsWith("@")) {
+    if (!text.endsWith("@") || text.length < 3)
+      return \`"\${text}" is not a variable: write @column@.\`;
+    const name = text.slice(1, -1).trim();
+    if (!VARIABLE_NAME.test(name))
+      return \`"\${text}" is not a column name.\`;
+    return { kind: "variable", name };
+  }
+  const first = text[0];
+  if (first === "'" || first === '"') {
+    if (text.length < 2 || text[text.length - 1] !== first)
+      return \`\${text} is not closed.\`;
+    return { kind: "literal", value: text.slice(1, -1) };
+  }
+  if (text.includes("@"))
+    return \`"\${text}" mixes a variable into a value.\`;
+  return { kind: "literal", value: text };
+}
+function splitComparison(text) {
+  let quote = null;
+  let inVariable = false;
+  for (let i = 0;i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === quote)
+        quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (ch === "@") {
+      inVariable = !inVariable;
+      continue;
+    }
+    if (inVariable)
+      continue;
+    for (const token of OPERATOR_TOKENS) {
+      if (text.startsWith(token, i)) {
+        return [text.slice(0, i), token, text.slice(i + token.length)];
+      }
+    }
+  }
+  return null;
+}
+export function parseLogic(source) {
+  const text = (source ?? "").trim();
+  if (!text)
+    return { ok: false, error: "The expression is empty." };
+  const split = splitConditions(text);
+  if (typeof split === "string")
+    return { ok: false, error: split };
+  const conditions = [];
+  const variables = [];
+  for (const part of split.parts) {
+    const trimmed = part.trim();
+    if (!trimmed)
+      return { ok: false, error: "A condition is missing beside & or |." };
+    const comparison = splitComparison(trimmed);
+    if (!comparison) {
+      return {
+        ok: false,
+        error: \`"\${trimmed}" has no comparison: write @column@=value, @column@!value, > or <.\`
+      };
+    }
+    const [leftRaw, token, rightRaw] = comparison;
+    const left = parseOperand(leftRaw);
+    if (typeof left === "string")
+      return { ok: false, error: left };
+    const right = parseOperand(rightRaw);
+    if (typeof right === "string")
+      return { ok: false, error: right };
+    if (left.kind !== "variable" && right.kind !== "variable") {
+      return { ok: false, error: \`"\${trimmed}" compares two constants: one side must be @column@.\` };
+    }
+    for (const operand of [left, right]) {
+      if (operand.kind === "variable" && !variables.includes(operand.name)) {
+        variables.push(operand.name);
+      }
+    }
+    conditions.push({ left, operator: OPERATOR_ALIASES[token], right });
+  }
+  return { ok: true, logic: { conditions, joins: split.joins, variables } };
+}
+export function contextValue(value) {
+  if (value === null || value === undefined)
+    return "";
+  if (value === true)
+    return "Y";
+  if (value === false)
+    return "N";
+  if (value instanceof Date)
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+  if (typeof value === "object")
+    return JSON.stringify(value);
+  return String(value);
+}
+function asNumber(text) {
+  if (text.trim() === "")
+    return null;
+  const number = Number(text);
+  return Number.isFinite(number) ? number : null;
+}
+function compare(left, operator, right) {
+  const l = asNumber(left);
+  const r = asNumber(right);
+  const numeric = l !== null && r !== null;
+  switch (operator) {
+    case "=":
+      return numeric ? l === r : left === right;
+    case "!":
+      return numeric ? l !== r : left !== right;
+    case ">":
+      return numeric ? l > r : left > right;
+    case "<":
+      return numeric ? l < r : left < right;
+    case ">=":
+      return numeric ? l >= r : left >= right;
+    case "<=":
+      return numeric ? l <= r : left <= right;
+  }
+}
+function resolve(operand, record) {
+  return operand.kind === "variable" ? contextValue(record[operand.name]) : operand.value;
+}
+export function evaluateLogic(source, record, fallback = false) {
+  if (!source || !source.trim())
+    return fallback;
+  const parsed = parseLogic(source);
+  if (!parsed.ok)
+    return false;
+  const { conditions, joins } = parsed.logic;
+  let result = false;
+  conditions.forEach((condition, index) => {
+    const value = compare(resolve(condition.left, record), condition.operator, resolve(condition.right, record));
+    if (index === 0)
+      result = value;
+    else
+      result = joins[index - 1] === "&" ? result && value : result || value;
+  });
+  return result;
+}
+export function logicVariables(source) {
+  if (!source || !source.trim())
+    return [];
+  const parsed = parseLogic(source);
+  return parsed.ok ? parsed.logic.variables : [];
+}
+export function fieldLogicState(field, record) {
+  const displayed = field.is_displayed !== false && evaluateLogic(field.display_logic, record, true);
+  const readOnly = field.is_read_only === true || evaluateLogic(field.read_only_logic, record);
+  const mandatory = displayed && (field.is_mandatory === true || evaluateLogic(field.mandatory_logic, record));
+  return { displayed, readOnly, mandatory };
+}
+function isBlank(value) {
+  return value === null || value === undefined || String(value).trim() === "";
+}
+export function sameValue(a, b) {
+  if (isBlank(a) && isBlank(b))
+    return true;
+  const left = contextValue(a);
+  const right = contextValue(b);
+  if (left === right)
+    return true;
+  const l = asNumber(left);
+  const r = asNumber(right);
+  if (l !== null && r !== null)
+    return l === r;
+  if (/^\\d{4}-\\d{2}-\\d{2}/.test(left) && /^\\d{4}-\\d{2}-\\d{2}/.test(right)) {
+    const lt = Date.parse(left);
+    const rt = Date.parse(right);
+    if (!Number.isNaN(lt) && !Number.isNaN(rt))
+      return lt === rt;
+  }
+  return false;
+}
+export function logicViolations(fields, record, changes, stored) {
+  const errors = [];
+  for (const field of fields) {
+    const label = field.name || field.column_name;
+    if (field.mandatory_logic && field.mandatory_logic.trim()) {
+      const displayed = field.is_displayed !== false && evaluateLogic(field.display_logic, record, true);
+      if (displayed && evaluateLogic(field.mandatory_logic, record) && isBlank(record[field.column_name])) {
+        errors.push(\`\${label} is required when \${field.mandatory_logic.trim()}\`);
+      }
+    }
+    if (stored && field.read_only_logic && field.read_only_logic.trim() && Object.prototype.hasOwnProperty.call(changes, field.column_name) && !sameValue(changes[field.column_name], stored[field.column_name]) && evaluateLogic(field.read_only_logic, stored)) {
+      errors.push(\`\${label} is read-only when \${field.read_only_logic.trim()}\`);
+    }
+  }
+  return errors;
+}
+`,
   "server/lib/guards.js": `/**
  * Access control — what \`%%rbac\` compiled to, enforced.
  *
@@ -12791,33 +14220,6 @@ export async function checkOperationAccess(db, user, tableName, operation) {
   if (!holdsRole(user, rows.map((row) => row.role_name))) {
     throw forbidden(
       \`Your roles do not permit \${operation} on \${tableName} (requires \${[...new Set(rows.map((r) => r.role_name))].join(" or ")})\`
-    );
-  }
-}
-
-/**
- * Transition access, matched on the states a write crosses.
- *
- * A transition has no endpoint of its own — moving a record along an edge is an
- * ordinary status update — so the compiler stored the \`(from_state, to_state)\`
- * pair and the check happens where the update knows both ends. Both are kept
- * because one event can sit on several edges.
- */
-export async function checkTransitionAccess(db, user, tableName, before, after, statusColumn) {
-  if (!statusColumn) return;
-  const from = before ? before[statusColumn] : null;
-  const to = after ? after[statusColumn] : null;
-  if (!to || from === to) return;
-
-  const rows = await db.query(
-    \`SELECT role_name, transition FROM sys_transition_access
-      WHERE table_name = $1 AND from_state = $2 AND to_state = $3 AND is_active = true\`,
-    [tableName, String(from ?? ""), String(to)]
-  );
-  if (!rows.length) return;
-  if (!holdsRole(user, rows.map((row) => row.role_name))) {
-    throw forbidden(
-      \`Your roles do not permit the "\${rows[0].transition}" transition (\${from} to \${to})\`
     );
   }
 }
@@ -13266,6 +14668,100 @@ export async function labelsForRows(db, entity, rows) {
   }
 
   return labels;
+}
+`,
+  "server/lib/lifecycle.js": `/**
+ * A record's lifecycle — Draft, its status flow, Final — and its moves.
+ *
+ * The JS twin of the NestJS stack's \`common/lifecycle.ts\`, read from the same
+ * data: \`model.lifecycle\` is the \`lifecycleTable\` that module is written from,
+ * so one model gives both stacks the same moves and the same lock.
+ *
+ * A record moves only when someone presses one of its moves: an edge its state
+ * diagram drew, or Reopen from the end of its flow back to Draft. Every end
+ * state is Final, and Final is locked. A record with no flow is never locked.
+ *
+ * Who may press a move is the model's \`%%rbac\` (\`model.rbac.transitions\`): a
+ * move it names belongs to those roles; one it does not is open to whoever may
+ * update the record; Reopen it does not name is the administrator's alone.
+ */
+
+import { holdsRole } from "./guards.js";
+
+export const LIFECYCLE_ERROR = "error";
+export const REOPEN_EVENT = "reopen";
+
+/** The lifecycle of a table, or null. */
+export function lifecycleOf(model, tableName) {
+  return model?.lifecycle?.[tableName] ?? null;
+}
+
+/** "draft" | "active" | "final" | "error". */
+export function phaseOf(lifecycle, value) {
+  const text = value == null ? "" : String(value);
+  if (text === LIFECYCLE_ERROR) return "error";
+  if (lifecycle.terminal.includes(text)) return "final";
+  if (text === "" || text === lifecycle.draft) return "draft";
+  return lifecycle.hasMachine ? "active" : "draft";
+}
+
+/** The end of a flow: Final, and locked until reopened. */
+export function isLocked(lifecycle, value) {
+  return !!lifecycle?.hasMachine && phaseOf(lifecycle, value) === "final";
+}
+
+/** Every move out of a value: the drawn edges, and Reopen from a locked end state. */
+export function movesFrom(lifecycle, value) {
+  const from = value == null ? "" : String(value);
+  const moves = lifecycle.edges
+    .filter((edge) => edge.from === from)
+    .map((edge) => ({ ...edge, kind: "move" }));
+  if (isLocked(lifecycle, from) && !moves.some((move) => move.to === lifecycle.draft)) {
+    moves.push({ from, to: lifecycle.draft, event: REOPEN_EVENT, label: "Reopen", kind: "reopen" });
+  }
+  return moves;
+}
+
+const oneToken = (text) => String(text ?? "").trim().toLowerCase().replace(/[\\s-]+/g, "_");
+
+/** The move a request names, by its event or by the state it goes to. */
+export function findMove(lifecycle, value, wanted) {
+  const event = wanted.event ? oneToken(wanted.event) : "";
+  const moves = movesFrom(lifecycle, value);
+  if (event && wanted.to) return moves.find((move) => move.event === event && move.to === wanted.to);
+  if (event) {
+    const named = moves.filter((move) => move.event === event);
+    return named.length === 1 ? named[0] : undefined;
+  }
+  if (wanted.to) {
+    const reaching = moves.filter((move) => move.to === wanted.to);
+    return reaching.length === 1 ? reaching[0] : undefined;
+  }
+  return undefined;
+}
+
+/** The roles \`%%rbac\` gives this move, or [] when it names none. */
+export function moveRoles(model, tableName, move) {
+  const roles = new Set();
+  for (const rule of model?.rbac?.transitions || []) {
+    if (rule.tableName !== tableName) continue;
+    if ((rule.edges || []).some((edge) => edge.from === move.from && edge.to === move.to)) {
+      for (const role of rule.roles || []) roles.add(role);
+    }
+  }
+  return [...roles];
+}
+
+/**
+ * May this person press this move? \`mayUpdate\` answers the fallback for a move
+ * nobody restricted — whether they may update the record at all.
+ */
+export async function mayPress(user, model, tableName, move, mayUpdate) {
+  const roles = moveRoles(model, tableName, move);
+  if (user?.isAdmin) return { allowed: true, roles };
+  if (roles.length > 0) return { allowed: holdsRole(user, roles), roles };
+  if (move.kind === "reopen") return { allowed: false, roles: [] };
+  return { allowed: await mayUpdate(), roles: [] };
 }
 `,
   "server/lib/naming.js": `/**
@@ -14151,6 +15647,7 @@ export async function evaluateRules(rules, record, options = {}) {
   return { violations, mutations, notifications, traces };
 }
 `,
+  "server/lib/sagas.js": "/**\n * The background workflows — a saga's steps, run after the write that started\n * them.\n *\n * A `kind: saga` workflow is a list of steps (`%%step`) compiled into\n * `model.sagas` and seeded into `sys_workflow_definitions`. A rule starts one\n * with a `trigger-workflow` action naming it; a saga declared `trigger:\n * automatic` runs on every write its `operation` names. Until this file, the\n * browser application stored the sagas and never ran one: the rule matched,\n * its row went into `_notifications`, and the step that should have moved an\n * invoice to `paid` did nothing.\n *\n * This is also the only writer of a state field. A person's request may not\n * change one (`bus.routes.js` refuses it); a saga's UpdateEntity step writes it\n * here, directly, the way the NestJS executor writes through Kysely without\n * passing its own access guard. Row targeting follows that executor exactly:\n *\n *   no entity                the triggering record\n *   entity + targetSource    the row whose id is that context value (a column of\n *                            the triggering record, or what an earlier step\n *                            published)\n *   entity + targetField     the rows whose targetField equals the triggering\n *                            record's id — children pointing back at it\n *\n * Steps it does not run here (Decision, REST, Agent, Formula beyond a copy) are\n * recorded as skipped in the run's detail rather than failing it.\n */\n\nimport { ident } from \"./db.js\";\nimport { evaluateRules } from \"./rules.js\";\nimport { stateFieldFor } from \"./workflows.js\";\nimport { lifecycleOf } from \"./lifecycle.js\";\n\n/**\n * How many state moves one write may set off. A saga that writes a state runs\n * the entity's rules again (below), and a model whose rules move a record back\n * and forth would otherwise never stop.\n */\nconst MAX_STATE_WRITE_DEPTH = 8;\n\n/** Find a saga definition by name: the table first, the model as a fallback. */\nasync function sagaNamed(db, model, name) {\n  try {\n    const row = await db.one(\n      \"SELECT definition FROM sys_workflow_definitions WHERE name = $1 AND kind = 'saga' AND is_active = true\",\n      [name]\n    );\n    if (row?.definition) {\n      return typeof row.definition === \"string\" ? JSON.parse(row.definition) : row.definition;\n    }\n  } catch {\n    /* fall through to the model */\n  }\n  return (model.sagas || []).find((saga) => saga.name === name) ?? null;\n}\n\nfunction entityNamed(model, name) {\n  const wanted = String(name ?? \"\").trim().toLowerCase().replace(/^bus_/, \"\");\n  return (\n    model.entities.find(\n      (entity) =>\n        entity.name.toLowerCase() === wanted ||\n        entity.tableName === `bus_${wanted}` ||\n        entity.tableName === wanted\n    ) ?? null\n  );\n}\n\n/** A literal step value as the column will hold it. */\nfunction literal(raw) {\n  const value = String(raw ?? \"\").trim();\n  if (value === \"true\") return true;\n  if (value === \"false\") return false;\n  if (value === \"null\") return null;\n  return value;\n}\n\nasync function updateEntity(db, model, triggering, record, step, context) {\n  const props = step.props || {};\n  const target = props.entity ? entityNamed(model, props.entity) : triggering;\n  const field = String(props.field ?? \"\").trim();\n  if (!target || !field) return { step: step.nodeId, skipped: \"no entity or field\" };\n\n  const value =\n    props.source && context[props.source.trim()] !== undefined\n      ? context[props.source.trim()]\n      : literal(props.value);\n\n  const targetSource = props.targetSource?.trim();\n  const targetField = props.targetField?.trim() || \"id\";\n  let column = \"id\";\n  let match;\n  if (targetSource) {\n    match = context[targetSource];\n  } else if (target === triggering) {\n    match = record.id;\n  } else if (targetField !== \"id\") {\n    column = targetField;\n    match = record.id;\n  }\n  if (match === undefined || match === null) {\n    return { step: step.nodeId, skipped: \"no row to update\" };\n  }\n\n  // A saga writing a record's status makes a move like anyone else: only along\n  // an edge the diagram drew, from where the record is (lib/lifecycle.js), and\n  // it stamps `<state>_at` as a button press does. Roles are not asked.\n  const lifecycle = lifecycleOf(model, target.tableName);\n  if (lifecycle?.hasMachine && lifecycle.column === field) {\n    const from = lifecycle.edges.filter((edge) => edge.to === String(value)).map((edge) => edge.from);\n    if (from.length === 0) {\n      return { step: step.nodeId, skipped: `no drawn edge reaches \"${String(value)}\"` };\n    }\n    const stamp = `${String(value)}_at`;\n    const stamps = target.attributes.some((attribute) => attribute.columnName === stamp);\n    const rows = await db.query(\n      `UPDATE ${ident(target.tableName)}\n          SET ${ident(field)} = $1, updated_at = NOW(), version = COALESCE(version, 0) + 1\n              ${stamps ? `, ${ident(stamp)} = NOW()` : \"\"}\n        WHERE ${ident(column)} = $2 AND deleted_at IS NULL AND ${ident(field)} = ANY($3)\n        RETURNING id`,\n      [value, match, from]\n    );\n    return { step: step.nodeId, entity: target.name, field, value, rows: rows.length, ids: rows.map((row) => row.id) };\n  }\n\n  const rows = await db.query(\n    `UPDATE ${ident(target.tableName)}\n        SET ${ident(field)} = $1, updated_at = NOW(), version = COALESCE(version, 0) + 1\n      WHERE ${ident(column)} = $2 AND deleted_at IS NULL\n      RETURNING id`,\n    [value, match]\n  );\n  return {\n    step: step.nodeId,\n    entity: target.name,\n    field,\n    value,\n    rows: rows.length,\n    ids: rows.map((row) => row.id),\n  };\n}\n\nasync function createEntity(db, model, step, context) {\n  const props = step.props || {};\n  const target = entityNamed(model, props.entity);\n  if (!target) return { step: step.nodeId, skipped: \"unknown entity\" };\n  let fields = {};\n  try {\n    fields = props.fields ? JSON.parse(props.fields) : {};\n  } catch {\n    return { step: step.nodeId, skipped: \"fields is not JSON\" };\n  }\n  const values = {};\n  for (const [column, source] of Object.entries(fields)) {\n    values[column] =\n      typeof source === \"string\" && context[source] !== undefined ? context[source] : source;\n  }\n  // A record a workflow creates starts in its machine's initial state, as one\n  // a person creates does, unless the step names the state itself.\n  const state = await stateFieldFor(db, model, target);\n  if (state?.initial && (values[state.field] === undefined || values[state.field] === null)) {\n    values[state.field] = state.initial;\n  }\n  const created = await db.insert(target.tableName, values);\n  if (props.as) context[props.as.trim()] = created?.id;\n  return { step: step.nodeId, entity: target.name, created: created?.id ?? null };\n}\n\nasync function deleteEntity(db, model, triggering, record, step, context) {\n  const props = step.props || {};\n  const target = props.entity ? entityNamed(model, props.entity) : triggering;\n  if (!target) return { step: step.nodeId, skipped: \"unknown entity\" };\n  const targetSource = props.targetSource?.trim();\n  const targetField = props.targetField?.trim() || \"id\";\n  const column = targetSource ? \"id\" : target === triggering ? \"id\" : targetField;\n  const match = targetSource ? context[targetSource] : record.id;\n  if (match === undefined || match === null) return { step: step.nodeId, skipped: \"no row\" };\n  const rows = await db.query(\n    `UPDATE ${ident(target.tableName)} SET deleted_at = NOW()\n      WHERE ${ident(column)} = $1 AND deleted_at IS NULL RETURNING id`,\n    [match]\n  );\n  return { step: step.nodeId, entity: target.name, deleted: rows.length };\n}\n\n/** Run one saga against the record that started it. */\nexport async function runSaga(db, model, entity, record, saga, user) {\n  const context = { ...record };\n  const results = [];\n  let status = \"completed\";\n  for (const step of saga.steps || []) {\n    try {\n      if (step.type === \"UpdateEntity\") {\n        results.push(await updateEntity(db, model, entity, record, step, context));\n      } else if (step.type === \"CreateEntity\") {\n        results.push(await createEntity(db, model, step, context));\n      } else if (step.type === \"DeleteEntity\") {\n        results.push(await deleteEntity(db, model, entity, record, step, context));\n      } else {\n        results.push({ step: step.nodeId, skipped: `${step.type} is not run in the browser` });\n      }\n    } catch (error) {\n      results.push({ step: step.nodeId, error: error.message });\n      status = \"failed\";\n      break;\n    }\n  }\n\n  await db.insert(\"sys_workflow_runs\", {\n    workflow_name: saga.name,\n    entity_name: entity.name,\n    record_id: record.id,\n    trigger: \"saga\",\n    status,\n    detail: JSON.stringify({ steps: results }),\n    created_by: user?.id ?? null,\n  });\n  return { saga: saga.name, status, steps: results };\n}\n\n/**\n * Every saga a write starts: those its rules named with `trigger-workflow`,\n * and those declared `trigger: automatic` for this operation. Run after the\n * write, against the record as stored — as the NestJS stack does.\n *\n * A saga that writes an entity's state field is itself a write that rules may\n * be keyed on (`status == \"paid\" and …`), and a person's request is no longer\n * how a state changes, so nothing else would evaluate them. After such a step\n * the moved rows are re-read and their UPDATE rules run again; only the sagas\n * those rules start are run, as `followStateWrites` does in the NestJS rules\n * service, to a depth of MAX_STATE_WRITE_DEPTH.\n */\nexport async function runTriggeredSagas(\n  db, model, entity, record, operation, notifications, user, depth = 0\n) {\n  const names = new Set();\n  for (const item of notifications || []) {\n    const action = String(item.action || \"\").toLowerCase();\n    const name = item.workflowName || item.workflow;\n    if (action.startsWith(\"trigger\") && name) names.add(String(name));\n  }\n  if (depth === 0) {\n    for (const saga of model.sagas || []) {\n      if (saga.entity !== entity.name || saga.trigger !== \"automatic\") continue;\n      if (saga.operation === \"ALL\" || saga.operation === operation) names.add(saga.name);\n    }\n  }\n\n  const runs = [];\n  for (const name of names) {\n    const saga = await sagaNamed(db, model, name);\n    if (!saga) continue;\n    const run = await runSaga(db, model, entity, record, saga, user);\n    runs.push(run);\n    runs.push(...(await followStateWrites(db, model, run, user, depth)));\n  }\n  return runs;\n}\n\nasync function followStateWrites(db, model, run, user, depth) {\n  if (depth >= MAX_STATE_WRITE_DEPTH) return [];\n  const runs = [];\n  for (const result of run.steps) {\n    if (!result.ids?.length) continue;\n    const target = entityNamed(model, result.entity);\n    if (!target) continue;\n    const state = await stateFieldFor(db, model, target);\n    if (!state || state.field !== result.field) continue;\n    const rules = await db.query(\n      `SELECT name, jdm_content FROM sys_rule_definitions\n        WHERE entity_name = $1 AND operation IN ('UPDATE', 'ALL') AND is_active = true\n        ORDER BY priority ASC`,\n      [target.name]\n    );\n    for (const id of result.ids) {\n      const row = await db.one(\n        `SELECT * FROM ${ident(target.tableName)} WHERE id = $1 AND deleted_at IS NULL`,\n        [id]\n      );\n      if (!row) continue;\n      const outcome = await evaluateRules(rules, row, {\n        columns: target.attributes.map((attribute) => attribute.columnName),\n      });\n      runs.push(\n        ...(await runTriggeredSagas(\n          db, model, target, row, \"UPDATE\", outcome.notifications, user, depth + 1\n        ))\n      );\n    }\n  }\n  return runs;\n}\n",
   "server/lib/workflows.js": `/**
  * Where a workflow is read from — the table, not the model.
  *
@@ -14253,6 +15750,37 @@ function parseDefinition(row) {
     kind: row.kind ?? value.kind ?? "state",
   };
 }
+
+/**
+ * The column an entity's state machine drives, and the state a new record
+ * starts in — or null when the entity has no state machine.
+ *
+ * \`status\`, else \`state\`, else \`stage\`: the same order \`language/state-field.ts\`
+ * states for the checker, the generator and the NestJS stack. That column is
+ * system-managed. No person writes it: the bus routes drop it on create (the
+ * record starts in \`initial\`) and refuse a change to it on update, and only the
+ * application's background workflows — the saga executor in \`sagas.js\`, the
+ * rules that start it, the hooks — move it. The form shows it read-only in the
+ * record's header and the list grid always shows it.
+ */
+export const STATE_FIELD_CANDIDATES = ["status", "state", "stage"];
+
+export async function stateFieldFor(db, model, entity) {
+  const machine = await stateMachineFor(db, model, entity.name);
+  if (!machine) return null;
+  const field = STATE_FIELD_CANDIDATES.find((candidate) =>
+    entity.attributes.some((attribute) => attribute.columnName === candidate)
+  );
+  if (!field) return null;
+  const initial =
+    machine.initial ??
+    (machine.transitions || []).find((transition) => transition.from === "[*]")?.to ??
+    null;
+  return { field, initial, machine };
+}
+
+/** \`details.code\` of the refusal a person's write to a state field receives. */
+export const STATE_FIELD_REFUSAL_CODE = "STATE_FIELD_SYSTEM_MANAGED";
 `,
   "server/migrate.js": `/**
  * Schema and seed, run once at first boot.
@@ -14510,8 +16038,9 @@ async function seedDictionary(db, model, tick = () => {}) {
     await db.query(
       \`INSERT INTO sys_column (sys_table_id, column_name, name, description, sys_reference_id,
                                is_mandatory, is_updateable, is_key, is_parent, is_identifier,
-                               is_selection_column, field_length, default_value, ref_table_name, seq_no)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                               is_selection_column, field_length, default_value, ref_table_name, seq_no,
+                               read_only_logic, mandatory_logic)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        ON CONFLICT (sys_table_id, column_name) DO NOTHING\`,
       [
         tableId,
@@ -14529,6 +16058,8 @@ async function seedDictionary(db, model, tick = () => {}) {
         column.defaultValue ?? null,
         column.refTableName ?? null,
         column.seqNo ?? 0,
+        column.readOnlyLogic ?? null,
+        column.mandatoryLogic ?? null,
       ]
     );
     tick();
@@ -14578,7 +16109,14 @@ async function seedDictionary(db, model, tick = () => {}) {
       [tabId, group.name]
     );
     if (exists) continue;
-    await db.insert("sys_field_group", { sys_tab_id: tabId, name: group.name, seq_no: group.seqNo ?? 0 });
+    await db.insert("sys_field_group", {
+      sys_tab_id: tabId,
+      name: group.name,
+      description: group.description ?? null,
+      columns: group.columns ?? 1,
+      is_collapsed_by_default: !!group.collapsed,
+      seq_no: group.seqNo ?? 0,
+    });
     tick();
   }
 
@@ -14602,8 +16140,11 @@ async function seedDictionary(db, model, tick = () => {}) {
       \`INSERT INTO sys_field (sys_tab_id, sys_column_id, sys_field_group_id, name, description,
                               is_displayed, is_displayed_grid, is_read_only, is_mandatory,
                               is_updateable, is_insertable, seq_no, seq_no_grid, display_length,
-                              field_type, sys_reference_id, default_value, is_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+                              field_type, sys_reference_id, default_value, is_key,
+                              is_same_line, column_span,
+                              display_logic, read_only_logic, mandatory_logic)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
+               $23)
        ON CONFLICT (sys_tab_id, sys_column_id) DO NOTHING\`,
       [
         tabId,
@@ -14624,6 +16165,11 @@ async function seedDictionary(db, model, tick = () => {}) {
         field.referenceId ?? null,
         field.defaultValue ?? null,
         !!field.isKey,
+        !!field.isSameLine,
+        field.columnSpan ?? null,
+        field.displayLogic ?? null,
+        field.readOnlyLogic ?? null,
+        field.mandatoryLogic ?? null,
       ]
     );
     tick();
@@ -15362,13 +16908,16 @@ export function authRoutes(model) {
 import { Router } from "../lib/router.js";
 import { badRequest, json, notFound, readJson } from "../lib/http.js";
 import { ident } from "../lib/db.js";
-import { checkOperationAccess, checkTransitionAccess, requireUser } from "../lib/guards.js";
-import { stateMachineFor } from "../lib/workflows.js";
+import { checkOperationAccess, requireUser } from "../lib/guards.js";
+import { STATE_FIELD_REFUSAL_CODE, stateFieldFor, stateMachineFor } from "../lib/workflows.js";
+import { runTriggeredSagas } from "../lib/sagas.js";
 import { runHooks } from "../lib/hooks.js";
 import { evaluateRules } from "../lib/rules.js";
+import { logicViolations } from "../lib/field-logic.js";
 import { recordAudit } from "./audit.routes.js";
 import { labelsForRows } from "../lib/labels.js";
 import { toRouteName } from "../lib/naming.js";
+import { findMove, isLocked, lifecycleOf, mayPress, movesFrom, phaseOf } from "../lib/lifecycle.js";
 
 /** Columns every generated table carries; never editable by a client. */
 const MANAGED = new Set([
@@ -15411,7 +16960,11 @@ function entityOr404(model, segment) {
 }
 
 /** Metadata for one entity, assembled from the dictionary rows. */
-async function entityMetadata(db, entity) {
+async function entityMetadata(db, entity, model) {
+  /* The state field is system-managed (lib/workflows.js stateFieldFor): never
+     an input on the form, always a column of the list, whatever the field rows
+     say — an administrator's toggle can neither make it editable nor hide it. */
+  const state = model ? await stateFieldFor(db, model, entity) : null;
   const table = await db.one("SELECT * FROM sys_table WHERE table_name = $1", [entity.tableName]);
   if (!table) throw notFound(\`\${entity.tableName} is not in the dictionary\`);
 
@@ -15422,14 +16975,20 @@ async function entityMetadata(db, entity) {
             f.is_displayed, f.is_displayed_grid,
             f.is_read_only, f.is_mandatory, f.is_updateable, f.is_insertable,
             f.seq_no, f.seq_no_grid, f.field_type, f.sys_field_group_id,
-            g.name AS group_name
+            f.is_same_line, f.column_span,
+            f.display_logic,
+            COALESCE(f.read_only_logic, c.read_only_logic) AS read_only_logic,
+            COALESCE(f.mandatory_logic, c.mandatory_logic) AS mandatory_logic,
+            g.name AS group_name, g.description AS group_description,
+            g.columns AS group_columns, g.is_collapsed_by_default AS group_collapsed,
+            g.seq_no AS group_seq_no
        FROM sys_column c
        JOIN sys_table t ON t.sys_table_id = c.sys_table_id
        LEFT JOIN sys_tab tb ON tb.sys_table_id = t.sys_table_id
        LEFT JOIN sys_field f ON f.sys_column_id = c.sys_column_id AND f.sys_tab_id = tb.sys_tab_id
        LEFT JOIN sys_field_group g ON g.sys_field_group_id = f.sys_field_group_id
       WHERE t.table_name = $1
-      ORDER BY COALESCE(f.seq_no, c.seq_no)\`,
+      ORDER BY COALESCE(g.seq_no, 0), COALESCE(f.seq_no, c.seq_no)\`,
     [entity.tableName]
   );
 
@@ -15445,9 +17004,12 @@ async function entityMetadata(db, entity) {
       table_name: table.table_name,
       name: table.name,
       description: table.description,
+      state_field: state?.field ?? null,
     },
     entity: { name: entity.name, route: entity.routeName },
-    columns: columns.map((column) => ({
+    columns: columns.map((column) => {
+      const isState = state?.field === column.column_name;
+      return {
       sys_field_id: column.sys_field_id,
       name: column.name || column.column_name,
       column_name: column.column_name,
@@ -15456,12 +17018,13 @@ async function entityMetadata(db, entity) {
          the fallback. The form renders it under the control. */
       description: column.description ?? null,
       sys_reference_id: column.sys_reference_id,
-      is_mandatory: column.is_mandatory ?? false,
-      is_updateable: column.is_updateable !== false,
-      is_insertable: column.is_insertable !== false,
-      is_read_only: column.is_read_only ?? false,
-      is_displayed: column.is_displayed !== false,
-      is_displayed_grid: column.is_displayed_grid !== false,
+      is_mandatory: isState ? false : (column.is_mandatory ?? false),
+      is_updateable: isState ? false : column.is_updateable !== false,
+      is_insertable: isState ? false : column.is_insertable !== false,
+      is_read_only: isState ? true : (column.is_read_only ?? false),
+      is_displayed: isState ? false : column.is_displayed !== false,
+      is_displayed_grid: isState ? true : column.is_displayed_grid !== false,
+      is_state_field: isState,
       is_key: column.is_key ?? false,
       /* The column tying a detail row to its master, from
          \`%%entity <Child> parent: <Parent>\`. Projected so the dictionary screen
@@ -15473,8 +17036,23 @@ async function entityMetadata(db, entity) {
       field_type: column.field_type,
       seq_no: column.seq_no ?? 0,
       seq_no_grid: column.seq_no_grid ?? 0,
+      /* \`%%section\`: the heading, the sentence under it, the grid it draws
+         (2 columns), and whether this field spans a row of its own. */
       group_name: column.group_name,
-    })),
+      group_description: column.group_description ?? null,
+      group_columns: column.group_columns ?? null,
+      group_collapsed: column.group_collapsed ?? false,
+      is_same_line: column.is_same_line ?? false,
+      col_span: column.column_span ?? null,
+      /* Field logic (Compiere's Display, Read Only and Mandatory Logic). The
+         field's own wins over the column's; the state field carries none, as
+         it is never an input. The form evaluates these as the record is
+         edited, and \`enforceFieldLogic\` below on every write. */
+      display_logic: isState ? null : (column.display_logic ?? null),
+      read_only_logic: isState ? null : (column.read_only_logic ?? null),
+      mandatory_logic: isState ? null : (column.mandatory_logic ?? null),
+      };
+    }),
     window: window ? { sys_window_id: window.sys_window_id, name: window.name } : undefined,
   };
 }
@@ -15590,6 +17168,27 @@ function validate(entity, values, mode) {
 const isBlank = (value) => value == null || String(value).trim() === "";
 
 /**
+ * Field logic, enforced. The form hides, locks and requires fields as the
+ * record is edited, but the form is a convenience and this is the control —
+ * the same refusals the NestJS stack gives (lib/field-logic.js
+ * \`logicViolations\`): a displayed field whose mandatory logic holds for the
+ * record as it will be saved must have a value, and a field whose read-only
+ * logic holds for the record as it is stored cannot be changed.
+ *
+ * Read from the dictionary rows rather than from model.json, so a condition an
+ * administrator edits under Windows, Tabs & Fields applies on the next write.
+ */
+async function enforceFieldLogic(db, entity, model, record, changes, stored) {
+  const metadata = await entityMetadata(db, entity, model);
+  const fields = metadata.columns.filter(
+    (column) => column.mandatory_logic || column.read_only_logic
+  );
+  if (!fields.length) return;
+  const errors = logicViolations(fields, record, changes, stored);
+  if (errors.length) throw badRequest("Validation failed", errors);
+}
+
+/**
  * The column a state machine moves, when the entity has one.
  *
  * Takes the workflow rather than the model: the definitions live in
@@ -15601,7 +17200,7 @@ const isBlank = (value) => value == null || String(value).trim() === "";
  */
 function statusColumn(entity, workflow) {
   if (!workflow) return null;
-  const candidates = ["status", "state", "workflow_state"];
+  const candidates = ["status", "state", "stage"];
   return entity.attributes.find((attribute) => candidates.includes(attribute.columnName))?.columnName ?? null;
 }
 
@@ -15655,11 +17254,11 @@ export function busRoutes(model) {
   const router = new Router();
 
   router.get("/:entity/meta", async (_request, { db, params }) =>
-    json(await entityMetadata(db, entityOr404(model, params.entity)))
+    json(await entityMetadata(db, entityOr404(model, params.entity), model))
   );
 
   router.get("/:entity/fields/form", async (_request, { db, params, query }) => {
-    const metadata = await entityMetadata(db, entityOr404(model, params.entity));
+    const metadata = await entityMetadata(db, entityOr404(model, params.entity), model);
     const includeHidden = query.get("includeHidden") === "true";
     return json(
       metadata.columns
@@ -15669,7 +17268,7 @@ export function busRoutes(model) {
   });
 
   router.get("/:entity/fields/grid", async (_request, { db, params, query }) => {
-    const metadata = await entityMetadata(db, entityOr404(model, params.entity));
+    const metadata = await entityMetadata(db, entityOr404(model, params.entity), model);
     const includeHidden = query.get("includeHidden") === "true";
     return json(
       metadata.columns
@@ -15776,11 +17375,21 @@ export function busRoutes(model) {
     const body = await readJson(request);
     let values = sanitize(entity, body);
 
+    // A new record starts in its machine's initial state, whatever the request
+    // said: the state is the application's to set, never a person's. A hook
+    // below may still set it, and the sagas the write starts move it on.
+    const state = await stateFieldFor(db, model, entity);
+    if (state) {
+      delete values[state.field];
+      if (state.initial) values[state.field] = state.initial;
+    }
+
     const before = await runHooks(model.hooks, "beforeCreate", entity.name, values);
     if (before.failures.length) throw badRequest("A lifecycle hook refused the write", before.failures);
     values = before.record;
 
     validate(entity, values, "create");
+    await enforceFieldLogic(db, entity, model, values, values, null);
 
     const outcome = await evaluateRules(await rulesFor(db, entity, "CREATE"), values, {
       columns: entity.attributes.map((attribute) => attribute.columnName),
@@ -15798,6 +17407,9 @@ export function busRoutes(model) {
 
     const created = await db.insert(entity.tableName, values);
     const after = await runHooks(model.hooks, "afterCreate", entity.name, created);
+    const runs = await runTriggeredSagas(
+      db, model, entity, created, "CREATE", outcome.notifications, user
+    );
 
     await recordAudit(db, {
       user,
@@ -15807,8 +17419,11 @@ export function busRoutes(model) {
       after: created,
     });
 
+    const stored = runs.length
+      ? (await db.one(\`SELECT * FROM \${ident(entity.tableName)} WHERE id = $1\`, [created.id])) ?? created
+      : created;
     return json(
-      { ...created, _hooks: [...before.log, ...after.log], _notifications: outcome.notifications },
+      { ...stored, _hooks: [...before.log, ...after.log], _notifications: outcome.notifications, _workflows: runs },
       { status: 201 }
     );
   });
@@ -15831,9 +17446,39 @@ export function busRoutes(model) {
     if (expectedVersion !== undefined && Number(current.version ?? 0) !== expectedVersion) {
       return versionConflict(entity, params.id, expectedVersion, Number(current.version ?? 0));
     }
+    // The end of a flow is Final and locked; Reopen is the way back.
+    const locked = lockedResponse(model, entity, current);
+    if (locked) return locked;
 
     const body = await readJson(request);
     let values = sanitize(entity, body);
+
+    // The state is changed only by background workflows. The value the record
+    // already holds is dropped, so a form sending the whole record back still
+    // saves; any other value is refused, for every person, administrator
+    // included — the same answer the NestJS stack gives.
+    const state = await stateFieldFor(db, model, entity);
+    if (state && Object.prototype.hasOwnProperty.call(values, state.field)) {
+      if (String(values[state.field] ?? "") === String(current[state.field] ?? "")) {
+        delete values[state.field];
+      } else {
+        return json(
+          {
+            statusCode: 403,
+            message:
+              \`"\${state.field}" is changed only by the record's moves, never through a form. \` +
+              "Use one of the record's action buttons (POST …/transition).",
+            details: {
+              code: STATE_FIELD_REFUSAL_CODE,
+              entity: entity.tableName,
+              field: state.field,
+              current: current[state.field] ?? null,
+            },
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     const before = await runHooks(model.hooks, "beforeUpdate", entity.name, values, { previous: current });
     if (before.failures.length) throw badRequest("A lifecycle hook refused the write", before.failures);
@@ -15844,6 +17489,7 @@ export function busRoutes(model) {
     // The rule sees the record it would become, not the fragment submitted:
     // \`status == 'draft'\` has to be answerable when the write only sets a title.
     const merged = { ...current, ...values };
+    await enforceFieldLogic(db, entity, model, merged, values, current);
     const outcome = await evaluateRules(await rulesFor(db, entity, "UPDATE"), merged, {
       columns: entity.attributes.map((attribute) => attribute.columnName),
     });
@@ -15854,16 +17500,6 @@ export function busRoutes(model) {
       );
     }
     Object.assign(values, applicableMutations(entity, outcome.mutations));
-
-    const machine = await stateMachineFor(db, model, entity.name);
-    await checkTransitionAccess(
-      db,
-      user,
-      entity.tableName,
-      current,
-      { ...current, ...values },
-      statusColumn(entity, machine)
-    );
 
     values.updated_by = user.id;
     values.updated_at = new Date().toISOString();
@@ -15884,6 +17520,12 @@ export function busRoutes(model) {
     const after = await runHooks(model.hooks, "afterUpdate", entity.name, updated, { previous: current });
 
     await recordWorkflowRun(db, model, entity, current, updated, user);
+    const runs = await runTriggeredSagas(
+      db, model, entity, updated, "UPDATE", outcome.notifications, user
+    );
+    const stored = runs.length
+      ? (await db.one(\`SELECT * FROM \${ident(entity.tableName)} WHERE id = $1\`, [params.id])) ?? updated
+      : updated;
     await recordAudit(db, {
       user,
       action: "UPDATE",
@@ -15894,8 +17536,8 @@ export function busRoutes(model) {
     });
 
     return json(
-      { ...updated, _hooks: [...before.log, ...after.log], _notifications: outcome.notifications },
-      { headers: etagHeader(updated) }
+      { ...stored, _hooks: [...before.log, ...after.log], _notifications: outcome.notifications, _workflows: runs },
+      { headers: etagHeader(stored) }
     );
   };
 
@@ -15912,6 +17554,8 @@ export function busRoutes(model) {
       [params.id]
     );
     if (!current) throw notFound(\`No \${entity.name} with id \${params.id}\`);
+    const locked = lockedResponse(model, entity, current);
+    if (locked) return locked;
 
     const before = await runHooks(model.hooks, "beforeDelete", entity.name, current);
     if (before.failures.length) throw badRequest("A lifecycle hook refused the delete", before.failures);
@@ -15945,7 +17589,195 @@ export function busRoutes(model) {
     return json({ success: true, id: params.id });
   });
 
+  /**
+   * The record's action buttons for this person, from where it is — the moves
+   * of its flow they may press, and Reopen at the end of it (lib/lifecycle.js).
+   */
+  router.get("/:entity/:id/actions", async (_request, { db, params, user }) => {
+    const entity = entityOr404(model, params.entity);
+    await checkOperationAccess(db, user, entity.tableName, "read");
+    const lifecycle = lifecycleOf(model, entity.tableName);
+    if (!lifecycle?.hasMachine) return json([]);
+    const record = await db.one(
+      \`SELECT * FROM \${ident(entity.tableName)} WHERE id = $1 AND deleted_at IS NULL\`,
+      [params.id]
+    );
+    if (!record) throw notFound(\`No \${entity.name} with id \${params.id}\`);
+    const mayUpdate = () => updateAllowed(db, user, entity.tableName);
+    const actions = [];
+    for (const move of movesFrom(lifecycle, record[lifecycle.column])) {
+      const decision = await mayPress(user, model, entity.tableName, move, mayUpdate);
+      if (!decision.allowed) continue;
+      actions.push({
+        event: move.event,
+        to: move.to,
+        label: move.label,
+        kind: move.kind,
+        restricted: decision.roles.length > 0,
+        roles: decision.roles,
+      });
+    }
+    return json(actions);
+  });
+
+  /**
+   * Press a move: \`{ event }\` or \`{ to }\`, with the version the record was read
+   * at as If-Match. The edge, the role and the record's rules are judged, then
+   * the state is written with its \`<state>_at\`, and the sagas the move starts
+   * run — the same contract as the NestJS stack's POST …/transition.
+   */
+  router.post("/:entity/:id/transition", async (request, { db, params, user }) => {
+    const entity = entityOr404(model, params.entity);
+    requireUser(user);
+    await checkOperationAccess(db, user, entity.tableName, "read");
+    const lifecycle = lifecycleOf(model, entity.tableName);
+    if (!lifecycle?.hasMachine) throw notFound(\`\${entity.name} has no status flow to move along\`);
+
+    const current = await db.one(
+      \`SELECT * FROM \${ident(entity.tableName)} WHERE id = $1 AND deleted_at IS NULL\`,
+      [params.id]
+    );
+    if (!current) throw notFound(\`No \${entity.name} with id \${params.id}\`);
+
+    const expectedVersion = parseIfMatch(request.headers.get("if-match"));
+    if (expectedVersion === undefined) {
+      return json(
+        {
+          statusCode: 428,
+          message: "A move needs the version the record was read at, as If-Match.",
+          details: { code: "PRECONDITION_REQUIRED" },
+        },
+        { status: 428 }
+      );
+    }
+    if (Number(current.version ?? 0) !== expectedVersion) {
+      return versionConflict(entity, params.id, expectedVersion, Number(current.version ?? 0));
+    }
+
+    const body = await readJson(request);
+    const from = current[lifecycle.column] == null ? null : String(current[lifecycle.column]);
+    const move = findMove(lifecycle, from, { event: body?.event, to: body?.to });
+    if (!move) {
+      const offered = movesFrom(lifecycle, from).map((item) => item.event || item.to);
+      return json(
+        {
+          statusCode: 409,
+          message:
+            \`"\${body?.event ?? body?.to ?? ""}" is not a move of this record from "\${from ?? "nothing"}". \` +
+            (offered.length ? \`Its moves are: \${offered.join(", ")}.\` : "It has no moves from here."),
+          details: { code: "INVALID_TRANSITION", entity: entity.tableName, id: params.id, from, offered },
+        },
+        { status: 409 }
+      );
+    }
+
+    const decision = await mayPress(user, model, entity.tableName, move, () =>
+      updateAllowed(db, user, entity.tableName)
+    );
+    if (!decision.allowed) {
+      return json(
+        {
+          statusCode: 403,
+          message:
+            move.kind === "reopen" && decision.roles.length === 0
+              ? "Only an administrator can reopen this record."
+              : \`"\${move.label}" can be pressed by: \${decision.roles.join(", ")}.\`,
+          details: { code: "TRANSITION_FORBIDDEN", entity: entity.tableName, id: params.id, roles: decision.roles },
+        },
+        { status: 403 }
+      );
+    }
+
+    const now = new Date().toISOString();
+    const values = {
+      [lifecycle.column]: move.to,
+      updated_by: user.id,
+      updated_at: now,
+      version: (current.version ?? 1) + 1,
+    };
+    const stamp = \`\${move.to}_at\`;
+    if (entity.attributes.some((attribute) => attribute.columnName === stamp)) values[stamp] = now;
+
+    // Refusing rules hold on a move as on a save, judged on the record as it
+    // will be: "a resolved case needs its notes".
+    const merged = { ...current, ...values };
+    const outcome = await evaluateRules(await rulesFor(db, entity, "UPDATE"), merged, {
+      columns: entity.attributes.map((attribute) => attribute.columnName),
+    });
+    if (outcome.violations.length) {
+      return json(
+        { statusCode: 422, message: "A business rule refused this move", violations: outcome.violations },
+        { status: 422 }
+      );
+    }
+
+    const updated = await db.update(entity.tableName, values, {
+      id: params.id,
+      version: current.version ?? null,
+    });
+    if (!updated) {
+      const latest = await db.one(\`SELECT version FROM \${ident(entity.tableName)} WHERE id = $1\`, [params.id]);
+      return versionConflict(entity, params.id, expectedVersion, Number(latest?.version ?? 0));
+    }
+    await recordWorkflowRun(db, model, entity, current, updated, user);
+    const runs = await runTriggeredSagas(db, model, entity, updated, "UPDATE", outcome.notifications, user);
+    const stored = runs.length
+      ? (await db.one(\`SELECT * FROM \${ident(entity.tableName)} WHERE id = $1\`, [params.id])) ?? updated
+      : updated;
+    await recordAudit(db, {
+      user,
+      action: "UPDATE",
+      entityType: entity.tableName,
+      entityId: params.id,
+      before: current,
+      after: stored,
+    });
+    return json(
+      {
+        ...stored,
+        lifecycle: {
+          column: lifecycle.column,
+          from,
+          to: move.to,
+          phase: phaseOf(lifecycle, move.to),
+          event: move.event,
+        },
+        _workflows: runs,
+      },
+      { headers: etagHeader(stored) }
+    );
+  });
+
   return router;
+}
+
+/** Whether this person may update the table — the fallback for a move nobody restricted. */
+async function updateAllowed(db, user, tableName) {
+  try {
+    await checkOperationAccess(db, user, tableName, "update");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 409 RECORD_FINAL for a record at the end of its flow, else null. */
+function lockedResponse(model, entity, current) {
+  const lifecycle = lifecycleOf(model, entity.tableName);
+  if (!lifecycle || !isLocked(lifecycle, current[lifecycle.column])) return null;
+  return json(
+    {
+      statusCode: 409,
+      message: "This record is Final and cannot be changed. Reopen it to make changes.",
+      details: {
+        code: "RECORD_FINAL",
+        entity: entity.tableName,
+        id: current.id,
+        state: current[lifecycle.column],
+      },
+    },
+    { status: 409 }
+  );
 }
 
 /** Only apply a rule's \`set\` when the target is a real column of the entity. */
@@ -17457,7 +19289,8 @@ function withReading(model) {
 import { Router } from "../lib/router.js";
 import { ident } from "../lib/db.js";
 import { columnsOf, labelForTable } from "../lib/labels.js";
-import { json, notFound, readJson } from "../lib/http.js";
+import { badRequest, json, notFound, readJson } from "../lib/http.js";
+import { parseLogic } from "../lib/field-logic.js";
 import { readableTables, requireAdmin, requireUser } from "../lib/guards.js";
 import { recordAudit } from "./audit.routes.js";
 
@@ -17626,9 +19459,25 @@ export function sysRoutes(model) {
       "is_mandatory",
       "seq_no",
       "seq_no_grid",
+      "display_logic",
+      "read_only_logic",
+      "mandatory_logic",
     ]) {
       if (key in body) allowed[key] = body[key];
     }
+    /* Field logic is checked here as the checker checks it in the model
+       (EML156): a condition that does not parse would hide or lock nothing and
+       say nothing, so it is refused with the reason rather than stored. */
+    const problems = [];
+    for (const key of ["display_logic", "read_only_logic", "mandatory_logic"]) {
+      if (!(key in allowed)) continue;
+      const text = allowed[key] == null ? "" : String(allowed[key]).trim();
+      allowed[key] = text || null;
+      if (!text) continue;
+      const parsed = parseLogic(text);
+      if (!parsed.ok) problems.push(\`\${key}: \${parsed.error}\`);
+    }
+    if (problems.length) throw badRequest("Validation failed", problems);
     const updated = await db.update("sys_field", allowed, { sys_field_id: params.id });
     if (!updated) throw notFound("No such field");
     return json(updated);
@@ -17738,12 +19587,13 @@ export function sysRoutes(model) {
  * Reads are open to any signed-in user; every write is administrator-only.
  */
 
+import { isLocked, lifecycleOf, phaseOf } from "../lib/lifecycle.js";
 import { Router } from "../lib/router.js";
 import { badRequest, json, noContent, notFound, readJson } from "../lib/http.js";
 import { requireAdmin, requireUser } from "../lib/guards.js";
 import { resolveEntity } from "./bus.routes.js";
 import { ident } from "../lib/db.js";
-import { stateMachineFor } from "../lib/workflows.js";
+import { stateFieldFor } from "../lib/workflows.js";
 
 export function workflowRoutes(model) {
   const router = new Router();
@@ -17904,51 +19754,44 @@ export function workflowRoutes(model) {
   });
 
   /**
-   * Where a record can go next.
+   * Where a record can go next — information, not an offer.
    *
-   * The transitions are filtered by the caller's roles here as well as being
-   * enforced on the write, because a UI that offers a button the server will
-   * refuse is worse than one that offers nothing.
+   * A state is never typed: a person moves a record by pressing one of its
+   * moves (POST /bus/:entity/:id/transition), whose buttons come from
+   * GET /bus/:entity/:id/actions. This is the picture of the flow beside them —
+   * where the record is, which moves the diagram draws from there, and whether
+   * it has reached a locked end.
    */
-  router.get("/entity/:entityName/:id/transitions", async (_request, { db, params, user }) => {
+  router.get("/entity/:entityName/:id/transitions", async (_request, { db, params }) => {
     const entity = resolveEntity(model, params.entityName);
     if (!entity) throw notFound(\`No entity "\${params.entityName}"\`);
 
-    const workflow = await stateMachineFor(db, model, entity.name);
-    if (!workflow) return json({ workflow: null, current: null, transitions: [] });
+    const state = await stateFieldFor(db, model, entity);
+    if (!state) return json({ workflow: null, column: null, current: null, transitions: [], systemManaged: true });
 
-    const column = ["status", "state", "workflow_state"].find((candidate) =>
-      entity.attributes.some((attribute) => attribute.columnName === candidate)
-    );
     const record = await db.one(
       \`SELECT * FROM \${ident(entity.tableName)} WHERE id = $1 AND deleted_at IS NULL\`,
       [params.id]
     );
     if (!record) throw notFound(\`No \${entity.name} with id \${params.id}\`);
 
-    const current = column ? record[column] : null;
-    const restrictions = await db.query(
-      "SELECT from_state, to_state, role_name FROM sys_transition_access WHERE table_name = $1 AND is_active = true",
-      [entity.tableName]
+    const current = record[state.field] ?? null;
+    const transitions = (state.machine.transitions || []).filter(
+      (transition) =>
+        String(transition.from) === String(current ?? state.initial ?? "") && transition.to !== "[*]"
     );
-    const held = new Set((user.roles || []).map((role) => role.toLowerCase().replace(/[\\s-]+/g, "_")));
 
-    const transitions = (workflow.transitions || [])
-      .filter((transition) => String(transition.from) === String(current ?? workflow.initial ?? ""))
-      .map((transition) => {
-        const required = restrictions
-          .filter(
-            (row) => row.from_state === String(transition.from) && row.to_state === String(transition.to)
-          )
-          .map((row) => row.role_name);
-        const permitted =
-          !required.length ||
-          user.isAdmin ||
-          required.some((role) => held.has(role.toLowerCase().replace(/[\\s-]+/g, "_")));
-        return { ...transition, requiredRoles: required, permitted };
-      });
-
-    return json({ workflow: workflow.name, column, current, transitions });
+    const lifecycle = lifecycleOf(model, entity.tableName);
+    return json({
+      workflow: state.machine.name,
+      column: state.field,
+      current,
+      transitions,
+      systemManaged: true,
+      // Where the record is in its lifecycle, and whether that end is locked.
+      phase: lifecycle ? phaseOf(lifecycle, current) : null,
+      locked: lifecycle ? isLocked(lifecycle, current) : false,
+    });
   });
 
   return router;
@@ -18397,6 +20240,13 @@ a { color: var(--primary); }
   padding: 16px 20px; border-bottom: 1px solid var(--border);
 }
 .record__title { margin: 0; font-size: 17px; }
+.record__state {
+  display: inline-flex; align-items: center; padding: 2px 9px;
+  border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
 .record__close {
   margin-left: auto; border: 0; background: transparent; color: var(--text-faint);
   font-size: 20px; line-height: 1; cursor: pointer; padding: 0 4px;
@@ -18413,12 +20263,23 @@ a { color: var(--primary); }
 .group__name { font-size: 14px; font-weight: 650; color: var(--primary); }
 .group__desc { margin: 1px 0 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); font-size: 12.5px; color: var(--text-faint); }
 .group__fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+/* \`%%section\`: exactly two columns, and a field alone on its row spans both. One
+   column on a narrow screen, where two would leave neither readable. */
+.group__fields--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.group__fields--2 > .field--wide { grid-column: 1 / -1; }
+@media (max-width: 640px) { .group__fields--2 { grid-template-columns: minmax(0, 1fr); } }
+details.group > summary.group__name { cursor: pointer; }
 
 .field { display: grid; gap: 6px; align-content: start; }
 .field--wide { grid-column: 1 / -1; }
 .field__head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .field__label { font-size: 13px; font-weight: 600; }
 .field__required { color: var(--destructive); }
+/* Field logic: \`.field\` is a grid, which beats the UA's [hidden] rule, so
+   display logic needs saying explicitly; a field locked by read-only logic
+   is told apart from one that is always read-only. */
+.field[hidden] { display: none; }
+.field--logic-locked .field__input { background: var(--surface-2); }
 .chip {
   display: inline-flex; align-items: center; gap: 3px;
   font-size: 10.5px; font-family: var(--mono); padding: 1px 7px; border-radius: 4px;
@@ -18581,6 +20442,8 @@ a { color: var(--primary); }
 .side__title { margin: 0 0 6px; font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-faint); font-weight: 700; }
 .side__meta { margin: 0 0 11px; font-size: 13px; }
 .side__transitions { display: grid; gap: 7px; }
+.side__actions { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.side__actions .side__meta { flex-basis: 100%; margin: 0; }
 .side__empty { margin: 0; font-size: 12.5px; color: var(--text-faint); }
 .side__list { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; font-size: 12.5px; }
 .side__list dt { color: var(--text-faint); }
@@ -19712,7 +21575,7 @@ async function request(method, path, body, audience = "app", extraHeaders = {}) 
 
 export const api = {
   get: (path) => request("GET", path),
-  post: (path, body) => request("POST", path, body ?? {}),
+  post: (path, body, headers) => request("POST", path, body ?? {}, "app", headers),
   // \`headers\` is how a save sends If-Match — the version the form opened the
   // record at — so the server can refuse it if someone saved in between.
   put: (path, body, headers) => request("PUT", path, body ?? {}, "app", headers),
@@ -20965,7 +22828,7 @@ export async function dictionaryView(root, { user } = {}) {
                   "thead",
                   el(
                     "tr",
-                    ["Field", "Column", "On form", "In grid", "Form seq", "Grid seq", "Required", "Read only", "Type", "Help"].map(
+                    ["Field", "Column", "On form", "In grid", "Form seq", "Grid seq", "Required", "Read only", "Logic", "Type", "Help"].map(
                       (heading) => el("th", heading)
                     )
                   )
@@ -20983,6 +22846,7 @@ export async function dictionaryView(root, { user } = {}) {
                       el("td", displayValue(field.seq_no_grid ?? "—")),
                       el("td", yesNo(field.is_mandatory)),
                       el("td", yesNo(field.is_read_only)),
+                      el("td", logicCell(field)),
                       el("td", field.field_type || "—"),
                       el("td.dict__help", field.description || "—")
                     )
@@ -20992,6 +22856,18 @@ export async function dictionaryView(root, { user } = {}) {
             )
       )
     );
+  }
+
+  /* Compiere's Display, Read Only and Mandatory Logic, as the dictionary row
+     holds them — what makes the field appear, lock or become required. */
+  function logicCell(field) {
+    const parts = [
+      ["Display", field.display_logic],
+      ["Read only", field.read_only_logic],
+      ["Mandatory", field.mandatory_logic],
+    ].filter(([, logic]) => logic);
+    if (!parts.length) return "—";
+    return parts.map(([label, logic]) => el("div", \`\${label}: \`, el("code", logic)));
   }
 
   async function showColumns(table) {
@@ -22068,6 +23944,7 @@ function purgeSection(project, navigate) {
 import { el, helpToast, mount, spinner, toast, displayValue } from "../dom.js";
 import { api } from "../api.js";
 import { setActions, childEntitiesOf } from "../main.js";
+import { fieldLogicState } from "../../server/lib/field-logic.js";
 
 const referenceCache = new Map();
 const lookupCache = new Map();
@@ -22152,21 +24029,31 @@ export async function recordPanel(root, { entity, id, onClose, onSaved, navigate
 
   let fields;
   let record = {};
+  /* The state field, when the entity has a state machine. It is never among
+     the form fields — no person changes it — so it is read from the grid
+     fields, which always carry it, and shown in the header. */
+  let stateField = null;
   try {
     fields = await api.get(\`/bus/\${entity.routeName}/fields/form\`);
     if (!isNew) record = await api.get(\`/bus/\${entity.routeName}/\${id}\`);
+    try {
+      const grid = await api.get(\`/bus/\${entity.routeName}/fields/grid\`);
+      stateField = grid.find((field) => field.is_state_field) ?? null;
+    } catch {
+      stateField = null;
+    }
   } catch (error) {
     mount(root, el("div.empty", el("h3", "Could not open this record"), el("p", error.message)));
     return;
   }
 
-  const editable = fields.filter((field) => !["id", "version"].includes(field.column_name));
+  const editable = fields.filter(
+    (field) => !["id", "version"].includes(field.column_name) && !field.is_state_field
+  );
   // Optimistic locking: the version this form opened the record at. A save
   // sends it as If-Match and the server refuses it with 409 if someone has
   // saved since; "Overwrite" moves it to the version that conflict reported.
   let openedVersion = record.version;
-  const requiredCount = editable.filter((field) => field.is_mandatory).length;
-
   const inputs = new Map();
   const violationBox = el("div.violations", { hidden: true });
 
@@ -22174,11 +24061,75 @@ export async function recordPanel(root, { entity, id, onClose, onSaved, navigate
     editable.map((field) => control(field, record, entity, inputs))
   );
 
+  /*
+   * Field logic — Compiere's Display, Read Only and Mandatory Logic.
+   *
+   * Each field may carry \`@column@=value\` conditions over the record being
+   * edited (\`%%field … display: | readonly: | mandatory:\`). They are evaluated
+   * against what the form holds now, not what was loaded, and again on every
+   * change, so a field appears, locks or becomes required as the record is
+   * edited — the dependency refresh Compiere's GridField does. The server
+   * judges the same logic on save (bus.routes.js \`enforceFieldLogic\`); this is
+   * what lets a person see the rule before they break it.
+   */
+  const requiredLabel = el("span.record__required");
+  const currentValues = () => {
+    const values = { ...record };
+    for (const [column, input] of inputs) {
+      values[column] = input.type === "checkbox" ? input.checked : input.value;
+    }
+    return values;
+  };
+  const applyLogic = () => {
+    const values = currentValues();
+    let required = 0;
+    for (const [field, node] of controls) {
+      const state = fieldLogicState(field, values);
+      const input = inputs.get(field.column_name);
+      node.hidden = !state.displayed;
+      if (input) {
+        input.disabled = input.dataset.baseDisabled === "true" || state.readOnly;
+        // \`required\` only on a field that is shown: a hidden required input
+        // stops the browser submitting a form nobody can see the fault in.
+        if (input.type !== "checkbox") input.required = state.mandatory && !input.disabled;
+      }
+      /* The marker exists exactly while the field is required — added and
+         removed, never hidden — so \`.field:has(.field__required)\` keeps
+         naming the required fields and nothing else. */
+      const marker = node.querySelector(".field__required");
+      if (state.mandatory && !marker) {
+        node.querySelector(".field__label")?.after(requiredMarker());
+      } else if (!state.mandatory && marker) {
+        marker.remove();
+      }
+      node.classList.toggle("field--logic-locked", state.readOnly && !field.is_read_only);
+      if (state.mandatory) required += 1;
+    }
+    requiredLabel.textContent = required ? \`\${required} required\` : "";
+    requiredLabel.hidden = !required;
+  };
+  applyLogic();
+  for (const input of inputs.values()) {
+    input.addEventListener("input", applyLogic);
+    input.addEventListener("change", applyLogic);
+  }
+
+  /* \`%%section\`: the model's own headings, in its order, each a two-column
+     grid in which a field alone on its row spans both columns. A model with
+     no sections has one ungrouped "General" list, as it always did. */
   const grouped = new Map();
   for (const [field, node] of controls) {
-    const group = field.group_name || "General";
-    if (!grouped.has(group)) grouped.set(group, []);
-    grouped.get(group).push(node);
+    const name = field.group_name || "General";
+    if (!grouped.has(name)) {
+      grouped.set(name, {
+        description: field.group_name ? field.group_description : null,
+        columns: field.group_columns || 0,
+        collapsed: !!field.group_collapsed,
+        nodes: [],
+      });
+    }
+    if (field.col_span > 1) node.classList.add("field--wide");
+    grouped.get(name).nodes.push(node);
   }
 
   const submit = async () => {
@@ -22252,20 +24203,29 @@ export async function recordPanel(root, { entity, id, onClose, onSaved, navigate
     el(
       "div.record__meta",
       \`\${editable.length} field\${editable.length === 1 ? "" : "s"}\`,
-      requiredCount ? el("span.record__required", \`\${requiredCount} required\`) : null,
+      requiredLabel,
       el("button.btn.btn--primary.btn--small", { type: "submit" }, isNew ? "Create" : "Save")
     ),
     violationBox,
     el(
       "div.record__body",
-      [...grouped.entries()].map(([group, nodes]) =>
-        el(
-          "section",
-          el("h3.group__name", group),
-          el("p.group__desc", \`\${group} information fields\`),
-          el("div.group__fields", nodes)
-        )
-      )
+      [...grouped.entries()].map(([group, section]) => {
+        const fieldsGrid = el(
+          section.columns === 2 ? "div.group__fields.group__fields--2" : "div.group__fields",
+          section.nodes
+        );
+        const description = section.description || \`\${group} information fields\`;
+        /* A collapsed section is a <details>: closed until opened, and a
+           browser's own control rather than one more thing to wire. */
+        return section.collapsed
+          ? el(
+              "details.group",
+              el("summary.group__name", group),
+              el("p.group__desc", description),
+              fieldsGrid
+            )
+          : el("section", el("h3.group__name", group), el("p.group__desc", description), fieldsGrid);
+      })
     ),
     el(
       "div.record__actions",
@@ -22328,6 +24288,7 @@ export async function recordPanel(root, { entity, id, onClose, onSaved, navigate
       el(
         "header.record__head",
         el("h2.record__title", isNew ? \`New \${entity.singularName}\` : recordTitle(record, editable, entity)),
+        stateBadge(stateField, record, entity, isNew),
         el("button.record__close", { title: "Close", "aria-label": "Close", onclick: onClose }, "✕")
       ),
       form,
@@ -22335,7 +24296,7 @@ export async function recordPanel(root, { entity, id, onClose, onSaved, navigate
       notesSlot,
       auditSlot
     ),
-    isNew ? null : el("div.split", el("div"), el("aside.side", await sidePanels(entity, id, record, onSaved)))
+    isNew ? null : el("div.split", el("div"), el("aside.side", await sidePanels(entity, id, record, onSaved, form, () => recordPanel(root, { entity, id, onClose, onSaved, navigate }))))
   );
 }
 
@@ -22576,46 +24537,83 @@ async function renderDetails(slot, entity, id, navigate) {
   if (sections.length) mount(slot, ...sections);
 }
 
-async function sidePanels(entity, id, record, onSaved) {
+async function sidePanels(entity, id, record, onSaved, form, reload) {
   const panels = [];
 
   try {
     const workflow = await api.get(\`/workflows/entity/\${entity.routeName}/\${id}/transitions\`);
     if (workflow.workflow) {
+      /* The record's action buttons: the moves this person may press from
+         where it is, from the server, which judges every press again. One
+         move or several, each a button; Reopen apart, at a locked end. */
+      let actions = [];
+      try {
+        actions = await api.get(\`/bus/\${entity.routeName}/\${id}/actions\`);
+      } catch {
+        actions = [];
+      }
+      const press = async (action, button) => {
+        button.disabled = true;
+        try {
+          await api.post(
+            \`/bus/\${entity.routeName}/\${id}/transition\`,
+            { event: action.event || undefined, to: action.to },
+            record.version == null ? {} : { "If-Match": \`"\${record.version}"\` }
+          );
+          toast(action.kind === "reopen" ? "Reopened — the record is a draft again." : \`\${action.label} — done.\`, "success");
+        } catch (error) {
+          toast(error.message || "The move was refused.", "error");
+        }
+        /* The list beside it, and this panel: the record has moved (or was
+           read afresh after a refusal), so its buttons are drawn again. */
+        await onSaved(null);
+        if (reload) await reload();
+      };
+      const moves = actions.filter((action) => action.kind === "move");
+      const reopen = actions.find((action) => action.kind === "reopen");
+      const button = (action, tone) => {
+        const node = el(
+          \`button.btn.btn--small\${tone}\`,
+          { type: "button", "data-testid": \`record-action-\${action.event || action.to}\` },
+          action.label
+        );
+        node.onclick = () => press(action, node);
+        return node;
+      };
+
+      if (workflow.locked && form) {
+        /* The end of a flow is Final and locked: nothing on the form can be
+           changed until the record is reopened. */
+        for (const control of form.querySelectorAll("input, select, textarea, button")) control.disabled = true;
+      }
+
       panels.push(
         el(
           "div.side__card",
+          { "data-testid": "record-actions" },
           el("h3.side__title", "Process"),
-          el("p.side__meta", \`\${workflow.workflow} — currently \${workflow.current ?? "unset"}\`),
-          workflow.transitions.length
+          el(
+            "p.side__meta",
+            { "data-testid": "record-lifecycle", "data-phase": workflow.phase ?? "" },
+            workflow.locked
+              ? \`Final — \${title(workflow.current ?? "")}. Locked; reopen it to change it.\`
+              : \`\${workflow.workflow} — currently \${title(workflow.current ?? "unset")}\`
+          ),
+          moves.length || reopen
             ? el(
-                "div.side__transitions",
-                workflow.transitions.map((transition) =>
-                  el(
-                    "button.btn",
-                    {
-                      disabled: !transition.permitted,
-                      title: transition.permitted
-                        ? \`Move to \${transition.to}\`
-                        : \`Requires \${transition.requiredRoles.join(" or ")}\`,
-                      onclick: async () => {
-                        try {
-                          await api.put(\`/bus/\${entity.routeName}/\${id}\`, {
-                            [workflow.column]: transition.to,
-                          });
-                          toast(\`Moved to \${transition.to}\`, "success");
-                          await onSaved(null);
-                          window.location.reload();
-                        } catch (error) {
-                          toast(error.message, "error");
-                        }
-                      },
-                    },
-                    transition.trigger || \`→ \${transition.to}\`
-                  )
-                )
+                "div.side__actions",
+                moves.length > 1 ? el("p.side__meta", "Choose where this record goes next:") : null,
+                ...moves.map((move) => button(move, ".btn--primary")),
+                reopen ? button(reopen, "") : null
               )
-            : el("p.side__empty", "No transitions available from here.")
+            : el(
+                "p.side__empty",
+                workflow.locked
+                  ? "Only an administrator, or a role allowed to reopen it, can reopen this record."
+                  : workflow.transitions.length
+                    ? "Its next moves belong to another role."
+                    : "This is a final state."
+              )
         )
       );
     }
@@ -22733,6 +24731,9 @@ async function control(field, record, entity, inputs) {
   }
 
   if (field.is_read_only || (record.id && field.is_updateable === false)) input.disabled = true;
+  /* What the dictionary fixes, kept apart from what read-only logic decides
+     from moment to moment — \`applyLogic\` re-derives \`disabled\` from both. */
+  input.dataset.baseDisabled = input.disabled ? "true" : "false";
   inputs.set(field.column_name, input);
 
   return [
@@ -22742,7 +24743,7 @@ async function control(field, record, entity, inputs) {
       el(
         "div.field__head",
         el("label.field__label", { for: id }, field.name),
-        field.is_mandatory ? el("span.field__required", { title: "Required" }, "*") : null,
+        field.is_mandatory ? requiredMarker() : null,
         el(\`span.chip.chip--\${chipKind}\`, chipLabel),
         el(
           "button.field__help",
@@ -22758,6 +24759,10 @@ async function control(field, record, entity, inputs) {
       input
     ),
   ];
+}
+
+function requiredMarker() {
+  return el("span.field__required", { title: "Required" }, "*");
 }
 
 /**
@@ -22778,6 +24783,11 @@ function fieldHelpBody(field, attribute) {
   if (attribute.maxLength) facts.push(\`Up to \${attribute.maxLength} characters\`);
   if (field.is_mandatory) facts.push("Required");
   if (field.is_read_only) facts.push("Read-only");
+  /* The dictionary's logic, as written — what makes the field appear, lock or
+     become required, which is otherwise invisible from the form. */
+  if (field.display_logic) facts.push(\`Shown when \${field.display_logic}\`);
+  if (field.read_only_logic) facts.push(\`Read-only when \${field.read_only_logic}\`);
+  if (field.mandatory_logic) facts.push(\`Required when \${field.mandatory_logic}\`);
   if (attribute.enumValues?.length) facts.push(\`One of: \${attribute.enumValues.join(", ")}\`);
   if (attribute.refTable) facts.push(\`References \${attribute.refTable}\`);
 
@@ -22896,6 +24906,28 @@ function showProblem(box, error) {
   );
   box.hidden = false;
   box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+/**
+ * The record's state, read-only, in the form's header.
+ *
+ * A state field is changed only by the application's background workflows, so
+ * it is never an input: it is shown here beside the title, and as a column of
+ * the list. A new record shows the state it will start in.
+ */
+function stateBadge(field, record, entity, isNew) {
+  if (!field) return null;
+  const value = isNew ? null : record[field.column_name];
+  const label = value == null || value === "" ? null : title(value);
+  return el(
+    "span.record__state",
+    {
+      "data-testid": "record-state",
+      title: \`\${field.name} — changed only by the application's workflows, never by hand\`,
+      "aria-label": \`\${field.name}: \${label ?? "set when saved"}\`,
+    },
+    label ?? "Set when saved"
+  );
 }
 
 function recordTitle(record, fields, entity) {
@@ -26187,7 +28219,7 @@ function reportActions(panel, report, { user, entities, reload }) {
 }
 `
 });
-var RUNTIME_BYTES = 620353;
+var RUNTIME_BYTES = 668852;
 
 // packages/core/src/types/bus-entity.types.ts
 function attributeTypeToReferenceId(type) {
@@ -26500,8 +28532,6 @@ function generateSysFields(tabId, columns, config = defaultDictionaryConfig) {
     seq_no: seqNumbers[index] ?? (index + 1) * 10,
     seq_no_grid: (index + 1) * 10,
     display_length: undefined,
-    x_position: undefined,
-    y_position: undefined,
     column_span: undefined,
     num_lines: undefined,
     is_displayed: true,
@@ -26671,8 +28701,8 @@ class DictionaryGenerator {
           is_allow_copy: attr.name !== entity.primaryKey,
           seq_no: attr.seqNo,
           callout: undefined,
-          read_only_logic: undefined,
-          mandatory_logic: undefined,
+          read_only_logic: attr.readOnlyLogic,
+          mandatory_logic: attr.mandatoryLogic,
           format_pattern: undefined,
           entity_type: this.config.defaultEntityType,
           is_active: true,
@@ -26730,8 +28760,46 @@ class DictionaryGenerator {
         ...field,
         _tempId: `field_${++fieldCounter}`,
         _tabRef: tabId,
-        _columnRef: columnEntries[idx]?._tempId ?? ""
+        _columnRef: columnEntries[idx]?._tempId ?? "",
+        display_logic: busAttrs[idx]?.displayLogic,
+        read_only_logic: busAttrs[idx]?.readOnlyLogic,
+        mandatory_logic: busAttrs[idx]?.mandatoryLogic
       }));
+      const layout = formLayoutFor(entity);
+      if (layout) {
+        const groupIds = new Map;
+        for (const group of layout.groups) {
+          const groupId = `fg_${++fieldGroupCounter}`;
+          groupIds.set(group.name, groupId);
+          sysFieldGroups.push({
+            name: group.name,
+            description: group.description,
+            field_group_type: "C",
+            is_collapsed_by_default: group.collapsed,
+            entity_type: this.config.defaultEntityType,
+            is_active: true,
+            created_by: this.config.createdBy,
+            updated_by: this.config.createdBy,
+            _tempId: groupId,
+            _tabRef: tabId,
+            columns: group.columns,
+            seq_no: group.seqNo
+          });
+        }
+        const keyed = new Map(busAttrs.map((attr, idx) => [attr.columnName, fieldEntries[idx]]));
+        for (const [column, place] of layout.fields) {
+          const field = keyed.get(column);
+          if (!field)
+            continue;
+          field._groupRef = groupIds.get(place.group);
+          field.seq_no = place.seqNo;
+          field.is_same_line = place.sameLine;
+          field.column_span = place.columnSpan;
+        }
+        const key = keyed.get(entity.primaryKey);
+        if (key)
+          key.seq_no = 0;
+      }
       sysFields.push(...fieldEntries);
     }
     let childSeq = 20;
@@ -26815,6 +28883,44 @@ var snake = (value) => value.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A
 function tableNameFor(entity) {
   const base = snake(entity.tableName || entity.name);
   return base.startsWith("bus_") || base.startsWith("sys_") ? base : `bus_${base}`;
+}
+
+// packages/generator/src/generators/tanstack-start-nestjs/lifecycle-module.ts
+function lifecycleTable(entities, workflows) {
+  const machineOf = (name) => name ? workflows.find((workflow) => workflow.entity === name) : undefined;
+  const table = {};
+  for (const entity of entities) {
+    const machine = machineOf(entity.name) ?? machineOf(entity.className);
+    if (!machine) {
+      table[entity.tableName] = {
+        column: DOC_STATUS_COLUMN,
+        hasMachine: false,
+        draft: LIFECYCLE_DRAFT,
+        afterDraft: LIFECYCLE_FINAL,
+        terminal: [LIFECYCLE_FINAL],
+        edges: [],
+        values: [LIFECYCLE_DRAFT, LIFECYCLE_FINAL, LIFECYCLE_ERROR]
+      };
+      continue;
+    }
+    const columns = (entity.attributes ?? []).map((attribute) => attribute.columnName ?? attribute.name).filter((name) => !!name);
+    const draft = draftValueFor(machine);
+    table[entity.tableName] = {
+      column: stateFieldOf(columns) ?? "workflow_status",
+      hasMachine: true,
+      draft,
+      afterDraft: machine.initial ?? draft,
+      terminal: [...machine.terminal],
+      edges: machine.transitions.filter((edge) => edge.from !== "[*]" && edge.to !== "[*]").map((edge) => ({
+        from: edge.from,
+        to: edge.to,
+        event: edge.trigger ? normalizeEvent(edge.trigger) : "",
+        label: moveLabel(edge.trigger, edge.to)
+      })),
+      values: [...machine.lifecycleValues]
+    };
+  }
+  return table;
 }
 
 // packages/generator/src/rbac/roles.ts
@@ -27688,6 +29794,11 @@ function buildModelBundle(parsed, project) {
       seqNo: index
     })),
     rbac: parsed.rbac,
+    lifecycle: lifecycleTable(parsed.entities.map((entity) => ({
+      name: entity.name,
+      tableName: tableNameFor(entity),
+      attributes: entity.attributes.map((attribute) => ({ name: attribute.name }))
+    })), parsed.workflows),
     reporting,
     roles: access.roles,
     users: access.users,
@@ -27743,9 +29854,18 @@ function buildModelBundle(parsed, project) {
         fieldLength: column.field_length,
         defaultValue: column.default_value,
         refTableName: refTableFor(entities, tableByTemp.get(column._tableRef) ?? "", column.column_name),
-        seqNo: column.seq_no
+        seqNo: column.seq_no,
+        readOnlyLogic: column.read_only_logic,
+        mandatoryLogic: column.mandatory_logic
       })),
-      fieldGroups: [],
+      fieldGroups: dictionary.sysFieldGroups.filter((group) => group._tabRef).map((group) => ({
+        tableName: tableByTemp.get(dictionary.sysTabs.find((tab) => tab._tempId === group._tabRef)?._tableRef ?? "") ?? "",
+        name: group.name,
+        description: group.description,
+        columns: group.columns ?? 2,
+        collapsed: group.is_collapsed_by_default,
+        seqNo: group.seq_no ?? 0
+      })),
       fields: dictionary.sysFields.map((field) => {
         const reference = columnByTemp.get(field._columnRef);
         const tableName = reference?.table ?? tabTable.get(field._tabRef) ?? "";
@@ -27763,10 +29883,16 @@ function buildModelBundle(parsed, project) {
           isInsertable: true,
           seqNo: field.seq_no,
           seqNoGrid: field.seq_no_grid,
+          fieldGroup: field._groupRef ? dictionary.sysFieldGroups.find((group) => group._tempId === field._groupRef)?.name : undefined,
+          isSameLine: field.is_same_line,
+          columnSpan: field.column_span,
           fieldType: attribute?.type,
           referenceId: attribute?.referenceId,
           defaultValue: attribute?.defaultValue ?? undefined,
-          isKey: attribute?.columnName === "id"
+          isKey: attribute?.columnName === "id",
+          displayLogic: field.display_logic,
+          readOnlyLogic: field.read_only_logic,
+          mandatoryLogic: field.mandatory_logic
         };
       })
     }
@@ -27921,19 +30047,28 @@ function screensFor(dictionary, entity) {
   const layout = dictionary.get(entity.name);
   if (!layout)
     return "";
+  const sectioned = layout.sections.length > 0;
   const rows = layout.fields.map((field) => `          <tr>
             <td><code>${escapeHtml(field.column)}</code></td>
-            <td>${escapeHtml(field.label)}</td>
+            <td>${escapeHtml(field.label)}</td>${sectioned ? `
+            <td>${escapeHtml(field.section ?? "—")}</td>
+            <td>${escapeHtml(field.place ?? "—")}</td>` : ""}
             <td>${field.onForm ? "Yes" : "No"}</td>
             <td>${field.inGrid ? "Yes" : "No"}</td>
             <td>${field.formSeq}</td>
             <td>${field.readOnly ? "Yes" : "No"}</td>
           </tr>`).join(`
 `);
+  const sections = sectioned ? `
+      <p>The form is laid out in ${layout.sections.length} section${layout.sections.length === 1 ? "" : "s"}, each a grid of two columns:</p>
+      <ul class="plain">
+          ${layout.sections.map((section) => `<li><b>${escapeHtml(section.name)}</b>${section.help ? ` &mdash; ${escapeHtml(section.help)}` : ""}</li>`).join(`
+          `)}
+      </ul>` : "";
   return `      <h4>Where it appears</h4>
-      <p>The application opens this record in the <b>${escapeHtml(layout.window)}</b> window, on the <b>${escapeHtml(layout.tab)}</b> tab. These are its ${layout.fields.length} field${layout.fields.length === 1 ? "" : "s"} &mdash; what the screen draws, in the order it draws them. An administrator can change any of this in Application Dictionary &rarr; Fields without regenerating the application.</p>
+      <p>The application opens this record in the <b>${escapeHtml(layout.window)}</b> window, on the <b>${escapeHtml(layout.tab)}</b> tab. These are its ${layout.fields.length} field${layout.fields.length === 1 ? "" : "s"} &mdash; what the screen draws, in the order it draws them. An administrator can change any of this in Application Dictionary &rarr; Fields without regenerating the application.</p>${sections}
       <table>
-        <thead><tr><th>Column</th><th>Label</th><th>On the form</th><th>In the list</th><th>Order</th><th>Read only</th></tr></thead>
+        <thead><tr><th>Column</th><th>Label</th>${sectioned ? "<th>Section</th><th>Place</th>" : ""}<th>On the form</th><th>In the list</th><th>Order</th><th>Read only</th></tr></thead>
         <tbody>
 ${rows}
         </tbody>
@@ -27959,8 +30094,18 @@ function manualDictionary(model) {
   const byTable = new Map;
   for (const tab of tabOf.values()) {
     if (tab.table && !byTable.has(tab.table)) {
-      byTable.set(tab.table, { window: tab.window, tab: tab.name, fields: [] });
+      byTable.set(tab.table, { window: tab.window, tab: tab.name, sections: [], fields: [] });
     }
+  }
+  const groupOf = new Map(context.sysFieldGroups.map((group) => [group._tempId, group]));
+  for (const group of context.sysFieldGroups) {
+    const tab = group._tabRef ? tabOf.get(group._tabRef) : undefined;
+    const layout = tab?.table ? byTable.get(tab.table) : undefined;
+    layout?.sections.push({
+      name: group.name,
+      help: group.description,
+      seqNo: group.seq_no ?? 0
+    });
   }
   for (const field of context.sysFields) {
     const tab = tabOf.get(field._tabRef);
@@ -27970,17 +30115,22 @@ function manualDictionary(model) {
     if (!layout)
       continue;
     const column = columnOf.get(field._columnRef) ?? "";
+    const group = field._groupRef ? groupOf.get(field._groupRef) : undefined;
     layout.fields.push({
       column,
       label: field.name,
+      section: group?.name,
+      place: group ? field.column_span === 2 ? "full width" : field.is_same_line ? "beside the field before it" : "starts a row" : undefined,
       onForm: field.is_displayed !== false,
       inGrid: field.is_displayed_grid !== false && !GRID_NOISE.has(column),
       formSeq: field.seq_no ?? 0,
       readOnly: !!field.is_read_only
     });
   }
-  for (const layout of byTable.values())
+  for (const layout of byTable.values()) {
     layout.fields.sort((a, b) => a.formSeq - b.formSeq);
+    layout.sections.sort((a, b) => a.seqNo - b.seqNo);
+  }
   const byEntity = new Map;
   for (const entity of model.entities) {
     const layout = byTable.get(tableNameFor(entity));

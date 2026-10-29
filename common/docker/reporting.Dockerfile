@@ -17,7 +17,7 @@
 # enterprise_reporting_tanstack/ is modified.
 
 # syntax=docker/dockerfile:1.7
-FROM oven/bun:1.4.3 AS builder
+FROM oven/bun:1.4.4 AS builder
 
 WORKDIR /app
 
@@ -45,7 +45,7 @@ RUN bun /overlay/subpath-overlay.ts --dir /app --base "${BASE_PATH}"
 RUN bun run build
 
 # ─── runtime ────────────────────────────────────────────────────────────────
-FROM oven/bun:1.4.3-slim
+FROM oven/bun:1.4.4-slim
 
 WORKDIR /app
 
@@ -79,7 +79,7 @@ ENV NODE_ENV=production \
     PUBLIC_DIR=/app/dist/client
 
 # The probe is bun rather than curl, and that is the reason there is no
-# apt-get in this file at all. `oven/bun:1.4.3-slim` ships no curl, no
+# apt-get in this file at all. `oven/bun:1.4.4-slim` ships no curl, no
 # ca-certificates and no psql, and the three lines that used to install them
 # bought one healthcheck: nothing here shells out to psql — the `pg_isready`
 # probes in docker-compose.yml run inside the postgres images, which have it —

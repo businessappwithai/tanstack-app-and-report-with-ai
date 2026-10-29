@@ -35,6 +35,7 @@ right one. Nothing after authoring adds a value you left out.
 | `%%entity <E> help:` | `sys_table.description` — and the opening of that entity's section of the generated manual |
 | `%%field <E>.<c> help:` | `sys_column.description` — the hint under the control, and the column's row in the manual |
 | `%%section entity: <E>; name: …; help: …; rows: …` | one `sys_field_group` per section (heading, help, two columns) and each field's group, order, row, column and span (§3.7.6) |
+| `%%field <E>.<c> display: \| readonly: \| mandatory: <logic>` | `sys_field.display_logic`, and `read_only_logic` / `mandatory_logic` on both `sys_column` and `sys_field` — when the field shows, locks or is required (§3.7.9) |
 | `%%entity <Child> parent: <Parent>` | the child's tab inside the parent's window at level 1, linked on the child's foreign key (§3.5.1) |
 | `%%category name: …; entities: …` | `sys_category`, the dashboard's grouping |
 | `%%entity <E> icon:` | `sys_table.icon` — the card, window heading and navigation icon |
@@ -214,8 +215,8 @@ one row**.
 
 **The state field is not in the form body — it is in the header and the grid.**
 On an entity with a `kind: state` machine, the column it drives (`status`, else
-`state`, else `stage`) is changed only by background workflows (§5.2), so it is
-never an input. The generated form shows it **read-only in its top header**,
+`state`, else `stage`) moves only by the record's action buttons (§5.2), so it
+is never an input. The generated form shows it **read-only in its top header**,
 beside the record's title, labelled from its enum; the list grid **always**
 shows it as a column, and an administrator's grid-visibility toggle cannot hide
 it. No `%%section` row places it (`EML178`, auto-fixed by removing it), and
@@ -267,9 +268,10 @@ A complete example, for a support case:
 **What it compiles to.** One `sys_field_group` per section on the entity's tab —
 `name` the heading, `description` the help, `columns = 2`,
 `is_collapsed_by_default` from `collapsed:` — and on every field
-`sys_field_group_id`, `seq_no` (section by section, row by row), `x_position` (1
-or 2), `y_position` (the row), `is_same_line` (the right-hand field of a pair) and
-`column_span` (2 for a row of one). Both generated applications draw it the same
+`sys_field_group_id`, `seq_no` (section by section, row by row), `is_same_line`
+(the right-hand field of a pair, drawn beside the one before it) and `column_span`
+(2 for a row of one). There is no X or Y position: Sequence, Same Line and
+Column Span are the whole of a form's layout. Both generated applications draw it the same
 way: the deployable one and the one that runs in a browser tab. A column a
 sectioned entity leaves out of every row is not lost — it is drawn in a trailing,
 collapsed *Other* section — and an entity with no sections at all is drawn as one
@@ -332,3 +334,56 @@ specific type alias over the canonical name. All but the last are checked:
 They are warnings rather than errors because the generator does not refuse them;
 they are still required. `node audit-model.mjs <file>.mmd` fails while any of
 them stands (§8.5), and §10 item 22 makes exiting `0` there part of delivering.
+
+#### 3.7.9 Field logic — when a field shows, locks or is required
+
+Compiere's **Display Logic**, **Read Only Logic** and **Mandatory Logic**: three
+conditions a field carries, each over the values of the record being edited. Write
+them on the column with `%%field`, in Compiere's own syntax:
+
+```text
+%%field Opportunity.loss_reason      display: @stage@=closed_lost
+%%field Opportunity.loss_reason      mandatory: @stage@=closed_lost
+%%field Opportunity.amount           readonly: @stage@=closed_won | @stage@=closed_lost
+%%field Quote.discount_percent       readonly: @status@!draft
+%%field Contract.renewal_notice_days display: @auto_renew@=Y
+%%field Contract.renewal_notice_days mandatory: @auto_renew@=Y
+```
+
+| Write | Means |
+|---|---|
+| `@column@=value` | equal — `@column@` is a column of the **same** entity |
+| `@column@!value` | not equal (`!=`, `^` and `<>` read the same) |
+| `>` `<` `>=` `<=` | compared as numbers when both sides are numbers, else as text (an ISO date compares in date order) |
+| `&` `\|` | and, or — read **left to right, no precedence, no parentheses**: `a \| b & c` is `(a \| b) & c` |
+| `Y` / `N`, `''` | a Yes/No column's values; the empty value (`@x@=''` is blank, `@x@!''` is set) |
+
+**Three separate rules, as Compiere keeps them.** Display hides the field while
+false; read-only locks it while true; mandatory requires it while true **and the
+field is shown** — a value nobody can see is not one anybody can be made to enter.
+The form re-evaluates all three on every change, so a field appears, locks or
+becomes required as the record is edited.
+
+**The API is the control, not the form.** Both generated stacks refuse a create
+or update that leaves a displayed field empty while its mandatory logic holds
+(400, `Validation failed`), and an update that changes a field while its read-only
+logic holds **for the record as stored**. Sending an unchanged value back is not a
+change. Display logic never refuses a write. Workflows and hooks are not people:
+a saga's `UpdateEntity` is not judged by field logic.
+
+**Column and field.** Read-only and mandatory logic land on `sys_column` and on
+`sys_field`; display logic on the field alone. An administrator can edit any of
+them afterwards in Window, Tab and Field without regenerating, and a field's own
+logic wins over its column's.
+
+**What it is not for.** Logic reads the record's own columns — no other table, no
+role, no `@#context@` variable, no `@SQL=` and no callouts. A rule that needs any
+of those is a `%%action` or a `%%hook`. Do not put logic on the primary key or on
+the state field, which are never inputs.
+
+| Code | Severity | What it means |
+|---|---|---|
+| `EML156` | error | the logic does not parse |
+| `EML157` | error | it reads a `@column@` the entity does not declare |
+| `EML158` | warning | display logic that depends on its own field — once hidden it can never be shown again |
+| `EML159` | warning | logic on the primary key or the state field |

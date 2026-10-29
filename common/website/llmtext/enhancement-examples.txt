@@ -182,10 +182,6 @@ flowchart TD
     G --> Z
 
     %%action confirmBooking trigger-workflow when: status == "requested" and confirmed_at != null and cancelled_at == null workflow: ClassFillTracking message: Booking confirmed — updating the class headcount
-    %%action cancelRequestedBooking trigger-workflow when: status == "requested" and cancelled_at != null workflow: BookingCancellation
-    %%action cancelConfirmedBooking trigger-workflow when: status == "confirmed" and cancelled_at != null workflow: BookingCancellation
-    %%action checkInBooking trigger-workflow when: status == "confirmed" and checked_in_at != null and cancelled_at == null workflow: BookingAttendance
-    %%action markBookingAbsent trigger-workflow when: status == "confirmed" and absent_marked_at != null and checked_in_at == null and cancelled_at == null workflow: BookingNoShow
 
 %%meta name: Class Fill Tracking
 %%meta kind: workflow
@@ -199,31 +195,4 @@ flowchart TD
     %%step B Formula target: seatCount source: booked_count operation: add operand: 1
     %%step C UpdateEntity entity: DanceClass targetSource: dance_class_id field: booked_count source: seatCount
     %%step D UpdateEntity field: status value: confirmed
-
-%%meta name: Booking Cancellation
-%%meta kind: workflow
-%%workflow BookingCancellation entity: Booking kind: saga trigger: rule
-flowchart TD
-    A([Cancellation recorded]) --> B[Mark the booking cancelled]
-    B --> Z([Place released])
-
-    %%step B UpdateEntity field: status value: cancelled
-
-%%meta name: Booking Attendance
-%%meta kind: workflow
-%%workflow BookingAttendance entity: Booking kind: saga trigger: rule
-flowchart TD
-    A([Arrival recorded]) --> B[Mark the booking attended]
-    B --> Z([Attended])
-
-    %%step B UpdateEntity field: status value: attended
-
-%%meta name: Booking No Show
-%%meta kind: workflow
-%%workflow BookingNoShow entity: Booking kind: saga trigger: rule
-flowchart TD
-    A([Absence recorded]) --> B[Mark the booking a no-show]
-    B --> Z([No-show])
-
-    %%step B UpdateEntity field: status value: no_show
 ```

@@ -12,7 +12,7 @@
     "validate:examples": "bun eml.ts validate -i ../examples/crm.eml.mmd"
   },
   "engines": {
-    "bun": ">=1.4.3",
+    "bun": ">=1.4.4",
     "node": ">=18"
   }
 }

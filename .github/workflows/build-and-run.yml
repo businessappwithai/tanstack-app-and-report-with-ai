@@ -68,7 +68,7 @@ permissions:
   contents: read
 
 env:
-  BUN_VERSION: "1.4.3"
+  BUN_VERSION: "1.4.4"
   # Where start.sh writes everything, relative to the repository root.
   RUNTIME: common/.runtime
 

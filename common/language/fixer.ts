@@ -34,8 +34,8 @@
  *   EML175  A column placed in two %%section rows → remove the later placement
  *   EML178  The state field placed in a %%section row → remove it (the state is
  *           shown read-only in the form's header); a section left empty goes too
- *   EML215  %%rbac granting a state transition → delete the line (only
- *           background workflows change a state)
+ *   EML512  A move rule or saga an action button replaces → remove the section,
+ *           and rewrite the stock help on the <state>_at columns it left behind
  *
  * All other codes are reported but left for the developer to fix manually.
  */
@@ -43,6 +43,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isPersonRoleColumn } from "./checker";
+import { rewriteStockHelp, sectionSpan } from "./move-facts";
 import { formatRows, parseRows } from "./sections";
 
 // ---------------------------------------------------------------------------
@@ -166,8 +167,8 @@ function applyFix(lines: string[], issue: Issue): FixResult {
       return fixDoublePlacement(lines, issue, base);
     case "EML178":
       return fixPlacedStateField(lines, issue, base);
-    case "EML215":
-      return fixTransitionGrant(lines, issue, base);
+    case "EML512":
+      return fixRetiredMove(lines, issue, base);
     default:
       base.description = `No auto-fix strategy for ${issue.code}.`;
       return base;
@@ -329,18 +330,33 @@ function fixPlacedStateField(lines: string[], issue: Issue, base: FixResult): Fi
   );
 }
 
-/** EML215: a transition is not a permission a role can hold. */
-function fixTransitionGrant(lines: string[], issue: Issue, base: FixResult): FixResult {
+/**
+ * EML512: a rule or saga that moved a record when a person recorded a move's time.
+ * An action button makes the move now, so the section goes; the checker only
+ * reports one whose every step or action is part of that pattern
+ * (language/move-facts.ts). The `<state>_at` help is rewritten in place, so no
+ * other fix's line number changes.
+ */
+function fixRetiredMove(lines: string[], issue: Issue, base: FixResult): FixResult {
   const index = (issue.line ?? 0) - 1;
-  const before = lines[index];
-  if (before === undefined || !/^\s*%%rbac\b/.test(before)) {
-    base.description = `Line ${issue.line ?? "?"} is not a %%rbac line; left alone.`;
+  const span = sectionSpan(lines, index);
+  if (!span) {
+    base.description = `Line ${issue.line ?? "?"} is not a move rule or saga; left alone.`;
     return base;
   }
-  lines.splice(index, 1);
+  const name = lines[index]!.trim().split(/\s+/)[1];
+  const removed = lines.splice(span.start, span.end - span.start);
+  const rewritten = rewriteStockHelp(lines);
   base.applied = true;
-  base.description = "Removed a %%rbac line granting a state transition; only background workflows change a state.";
-  base.changes = [{ lineNo: index + 1, before, after: "", action: "delete" }];
+  base.description =
+    `Removed ${name} (${removed.length} lines); an action button makes this move now.` +
+    (rewritten ? ` Rewrote ${rewritten} help line${rewritten === 1 ? "" : "s"} on the <state>_at columns.` : "");
+  base.changes = removed.map((before, offset) => ({
+    lineNo: span.start + offset + 1,
+    before,
+    after: "",
+    action: "delete" as const,
+  }));
   return base;
 }
 
@@ -976,7 +992,7 @@ ${c.bold("AUTO-FIXABLE CODES")}
   EML174   a %%section row of three or more → split it into rows of two
   EML175   a column placed in two %%section rows → remove the later one
   EML178   the state field placed in a %%section row → remove it from the row
-  EML215   %%rbac granting a state transition → delete the line
+  EML512   a move rule or saga a button replaces → remove it
   EML117   No primary key → insert  string id PK  as first attribute
   EML421   State workflow: no [*]→First transition → insert it
   EML422   State workflow: no terminal state (→[*]) → insert it

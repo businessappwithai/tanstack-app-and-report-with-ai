@@ -24,7 +24,7 @@ M7. Dictionary is mandatory: FK on every reference, enum binding on every closed
 M8. Validation is mandatory: checker, fixer if needed, checker again, then audit, on the exact bytes delivered. Never state a count or verdict a run did not print.
 M9. Deliver exactly one complete `.mmd` (ENHANCE: original filename). Never a patch, excerpt, diff or abbreviated model. First non-blank line starts with `%%`.
 M10. Prose about a model is not a model. Headings and glossaries fail the checker with `EML004`.
-M11. A state field (the `status`/`state`/`stage` a `kind: state` machine drives) is system-managed: no person changes it through a form; only background workflows do. Each state a machine enters needs a saga writing it, started by a rule on the fact the move depends on (`EML507`). No `%%rbac` grants a transition (`EML215`). Never put it in a `%%section` row (`EML178`): the form shows it read-only in its header and the list grid always shows it.
+M11. A state field (the `status`/`state`/`stage` a `kind: state` machine drives) is never typed: a save puts a record in Draft, an accepted save moves it into its flow (or to Final with no flow), and from there it moves only by its action buttons, along drawn edges; every end state is Final and locked, Reopen takes it back. Give each move to its role: `%%rbac role:<roles> on <Entity>.<event>` (`reopen` for Reopen). No rule or saga moves a record its buttons move (`EML512`). Never put it in a `%%section` row (`EML178`): the form shows it read-only in its header and the list grid always shows it.
 
 LOAD (lazy)
 Fetch a chunk only when its step arrives. Read it fully, then follow it. Never load one twice. Never act on a chunk from memory.

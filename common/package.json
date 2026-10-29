@@ -4,20 +4,20 @@
   "version": "1.0.0",
   "description": "Two products and one modelling language. This manifest covers only the root-level language folder; each subfolder has its own.",
   "engines": {
-    "bun": ">=1.4.3"
+    "bun": ">=1.4.4"
   },
   "scripts": {
-    "check": "bun run check:models && bun run check:protocol && bun run type-check && bun run check:language-tools && bun run check:stacks && bun run check:clis && bun run check:pack",
+    "check:all": "bun run check:models && bun run check:protocol && bun run type-check && bun run check:language-tools && bun run check:stacks && bun run check:clis && bun run check:pack",
     "check:models": "bun scripts/check-models.ts",
     "check:protocol": "bun scripts/check-protocol.ts",
     "check:stacks": "bun scripts/check-stacks.ts",
-    "_comment:clis": "Two CLIs, one runtime: `appwithai` and `appwithai-wasm` both run on bun 1.4.3, what app-with-ai-tanstack requires throughout. `check:clis` runs both under whichever bun is on PATH and prints which; CI runs each in a job of its own so they go side by side \u2014 see .github/workflows/root-ci.yml.",
+    "_comment:clis": "Two CLIs, one runtime: `appwithai` and `appwithai-wasm` both run on bun 1.4.4, what app-with-ai-tanstack requires throughout. `check:clis` runs both under whichever bun is on PATH and prints which; CI runs each in a job of its own so they go side by side \u2014 see .github/workflows/root-ci.yml.",
     "check:clis": "bun scripts/check-clis.ts",
     "check:cli": "bun scripts/check-clis.ts --only appwithai",
     "check:cli:wasm": "bun scripts/check-clis.ts --only appwithai-wasm",
     "check:pack": "bun scripts/check-reporting-pack.ts",
-    "_comment:type-check": "bun check is Bun's own type checker (1.4.3+). It runs from the repository root because, inside common/, `bun check` names this package's own `check` script and Bun runs that instead of the built-in. The root has no package.json, so there it is the type checker, and an older Bun fails with \"Script not found\" rather than passing.",
-    "type-check": "cd .. && bun check -p common/tsconfig.language.json",
+    "_comment:type-check": "bun check is Bun's own type checker (1.4.3+; this project pins 1.4.4). No script here may be named `check`: Bun runs a package script of that name in preference to the built-in, so `bun check` would quietly run the whole chain instead of type-checking. The aggregate is `check:all` for that reason. An older Bun fails with \"Script not found\" rather than passing.",
+    "type-check": "bun check -p tsconfig.language.json",
     "_comment:language-tools": "html/checker.js and html/fixer.js are bundled from language/browser/*.entry.ts, and each one inlines language/appwithai-language.json. Editing the definition or the checker stales them, and nothing else notices — so `--check` runs in `check` and fails rather than serving a validator that disagrees with this repository's own language. website/viewers/eml-model.js is NOT built here: its entry lives in the app-with-ai-tanstack checkout and imports that repository's language copy, so it is carried across from there.",
     "build:language-tools": "bun scripts/build-language-tools.ts",
     "check:language-tools": "bun scripts/build-language-tools.ts --check",
@@ -26,7 +26,7 @@
     "check:pack:ci": "bun scripts/check-reporting-pack.ts --require-server"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.3",
+    "@types/bun": "^1.4.4",
     "@types/node": "^22.10.2",
     "typescript": "^7.0.2"
   }
