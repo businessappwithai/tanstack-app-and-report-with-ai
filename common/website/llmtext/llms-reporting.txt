@@ -10,7 +10,7 @@
   repository. The orchestrator `businessappwithai/app-and-report-with-ai-tanstack`
   checks it out at a pinned commit as `enterprise_reporting_tanstack/`, which is
   what every path below is relative to
-- **Runtime**: Bun ≥ 1.4.3. `node` is not supported for development
+- **Runtime**: Bun ≥ 1.4.4. `node` is not supported for development
 - **Dev server**: `bun --bun vite dev` → http://localhost:4050
 - **Sibling spec**: `llms.txt` describes APPWITHAI, the *other* consumer of
   the same EML models. Read that one for the language itself; read this one for
@@ -172,7 +172,7 @@ lets through.
 
 | Layer | Choice | Note |
 |---|---|---|
-| Runtime | Bun ≥ 1.4.3 | Required. Not Node |
+| Runtime | Bun ≥ 1.4.4 | Required. Not Node |
 | Framework | TanStack Start v1 (`@tanstack/react-start` ^1.167.65) | File-based routing, SSR |
 | Config DB | PostgreSQL | Only. No MariaDB, no SQLite, anywhere in the running system |
 | Query builder | Kysely | Typed for the config DB, `Kysely<any>` for data sources |

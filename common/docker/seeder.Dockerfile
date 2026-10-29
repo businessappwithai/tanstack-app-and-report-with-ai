@@ -22,7 +22,7 @@
 # which is why there is no `--from=common` here any more.
 
 # syntax=docker/dockerfile:1.7
-FROM oven/bun:1.4.3
+FROM oven/bun:1.4.4
 
 WORKDIR /app
 

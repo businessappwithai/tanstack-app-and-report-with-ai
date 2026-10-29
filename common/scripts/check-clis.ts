@@ -56,7 +56,7 @@ interface Cli {
   readonly minFiles: number;
   /**
    * The bun this CLI is meant to run on. Both are 1.4 now: app-with-ai-tanstack
-   * requires 1.4.3 throughout, the generator that ships both CLIs included,
+   * requires 1.4.4 throughout, the generator that ships both CLIs included,
    * and the Dockerfiles `appwithai` generates run on it. The WASM path was
    * kept on 1.3 until upstream dropped it.
    *

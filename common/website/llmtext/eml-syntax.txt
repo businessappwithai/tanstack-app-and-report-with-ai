@@ -681,51 +681,77 @@ one applies — it is how a reader knows what the handler is for.
 
 ### 5.2 `kind: state` — the lifecycle of a record
 
-**The state field is system-managed.** The column a `kind: state` machine
-drives — `status`, else `state`, else `stage` — is never changed by a person
-through a form or a direct API write. Only background workflows change it: a
-saga's `UpdateEntity` step, started by a rule's `trigger-workflow` or by the
-saga's own trigger, a hook, or the application's own code. A new record starts
-in the machine's initial state whatever the request said. A person moves a
-record by **recording the fact the move depends on** — a confirmation time, an
-approver, a reason — and a rule turns that fact into the saga that writes the
-state. The generated form shows the state **read-only in its top header**, beside
-the record's title, and the list grid **always** shows it as a column; it is
-never an input and never sits in a `%%section` row.
+**Every record has a lifecycle: Draft, its status flow, Final.** A save puts a
+record in **Draft** and runs its rules and workflows. Accepted, a record with a
+status flow moves to the flow's first status; a record with none moves to
+**Final**. Refused, it goes to **Error** with the reason, stays editable, and
+saving it again runs them again. From there a record with a flow moves only when
+someone presses one of its **action buttons** — a move along an edge the
+diagram draws. With several moves out of a status, the person chooses one.
+Every end state (`x --> [*]`) is **Final**: the record is locked, and **Reopen**
+takes it back to Draft. `final` and `error` are reserved as stored values
+(`EML509`); `draft` is the lifecycle's own, and a machine that starts in a
+`draft` state of its own keeps it.
+
+**The state field is never typed.** The column a `kind: state` machine drives —
+`status`, else `state`, else `stage` — is never changed by a person through a
+form or a direct API write: a save that carries a different value is refused
+(below), and the record's buttons are how it moves. The generated form shows the
+state **read-only in its top header**, beside the record's title and its action
+buttons, and the list grid **always** shows it as a column; it is never an input
+and never sits in a `%%section` row. A `<state>_at` column, where the model keeps
+one, is **stamped by the application** when the record reaches that state.
+
+**Each move is a role's.** `%%rbac role:<roles> on <Entity>.<event>` gives a move
+to those roles: the button is theirs and nobody else's. A move whose edge has no
+label is named `from->to`; `reopen` names Reopen. A move no `%%rbac` line names
+is open to anyone who may update the record (`EML511`, an info, lists them), and
+Reopen no line names is the administrator's alone. A user holding several roles
+may press every move any of them is given — a role only adds. A record therefore
+**moves between roles** as it moves through its flow: it waits for whoever holds
+a move out of its current status, and "Waiting for me" lists exactly those.
 
 ```mermaid
 %%meta name: Booking Lifecycle
 %%meta kind: erd
 
-%%enum BookingStatus: requested, confirmed, attended, cancelled, no_show
+%%enum BookingStatus: draft, requested, confirmed, attended, cancelled, no_show
 
 erDiagram
     Booking {
         string   id PK
+        string   member_name
         string   status
-        datetime requested_at
+        datetime requested_at OPTIONAL
         datetime confirmed_at OPTIONAL
+        datetime attended_at OPTIONAL
         datetime cancelled_at OPTIONAL
-        datetime checked_in_at OPTIONAL
-        datetime absent_marked_at OPTIONAL
+        datetime no_show_at OPTIONAL
+        text     notes OPTIONAL
     }
 
 %%field Booking.status enum: BookingStatus
 
 %%entity Booking help: One member's place on one session, from the moment they ask for it to the moment they turn up or do not. The booking is what the studio counts capacity against, so a cancelled one frees a place and a no-show does not.
-%%field Booking.status help: requested — asked for, not yet accepted; confirmed — the place is held; attended — the member came; cancelled — the place is released; no_show — the place was held and wasted, which is what a repeat-offender policy is built on. Set only by the booking workflows, when the time below that each move depends on is recorded.
-%%field Booking.requested_at help: When the member asked. It orders the waiting list, so it is the time of the request rather than of the confirmation.
-%%field Booking.confirmed_at help: When reception accepted the booking. Recording it is what moves a requested booking to confirmed.
-%%field Booking.cancelled_at help: When the booking was rejected or cancelled. Recording it releases the place, whichever state the booking was in.
-%%field Booking.checked_in_at help: When the member arrived. Recording it on a confirmed booking marks it attended.
-%%field Booking.absent_marked_at help: When reception recorded that the member did not come. Recording it on a confirmed booking marks it a no-show.
-%%section entity: Booking; name: Booking; help: When the booking was asked for, confirmed, attended or released — each time is what moves it on.; rows: requested_at, confirmed_at | checked_in_at, absent_marked_at | cancelled_at
+%%field Booking.member_name help: The member the place is held for, as reception would call them.
+%%field Booking.status help: Where the booking is: requested, confirmed, attended, cancelled or no_show. It moves only by the booking's action buttons; nobody types it.
+%%field Booking.requested_at help: When the booking reached requested. Stamped by the application when the move is made.
+%%field Booking.confirmed_at help: When reception confirmed the place. Stamped by the application when the move is made.
+%%field Booking.attended_at help: When the member was checked in. Stamped by the application when the move is made.
+%%field Booking.cancelled_at help: When the place was released. Stamped by the application when the move is made.
+%%field Booking.no_show_at help: When reception recorded that the member did not come. Stamped by the application when the move is made.
+%%field Booking.notes help: Anything reception should know about this booking — a late arrival, a changed class.
+%%section entity: Booking; name: Booking; help: Who the place is for, and when it reached each status — each time is stamped as the booking moves.; rows: member_name, requested_at | confirmed_at, attended_at | cancelled_at, no_show_at | notes
+
+%%rbac role:reception|manager on Booking.read
+%%rbac role:reception|manager on Booking.update
 
 %%meta name: Booking Lifecycle
 %%meta kind: workflow
 %%workflow BookingLifecycle entity: Booking kind: state
 stateDiagram-v2
-    [*] --> requested
+    [*] --> draft
+    draft --> requested : submit
     requested --> confirmed : confirm
     requested --> cancelled : reject
     confirmed --> attended  : check_in
@@ -735,61 +761,13 @@ stateDiagram-v2
     cancelled --> [*]
     no_show   --> [*]
 
-%%meta name: Booking Progress
-%%meta kind: rules
-%%rule bookingProgress on Booking event: beforeUpdate priority: 10
-flowchart TD
-    A([Booking updated]) --> B{Which time was recorded?}
-    B -->|Confirmed| C[Confirm it]
-    B -->|Cancelled| D[Release it]
-    B -->|Checked in| F[Mark it attended]
-    B -->|Absent| G[Mark it a no-show]
-    C --> E([End])
-    D --> E
-    F --> E
-    G --> E
-
-    %%action confirmBooking trigger-workflow when: status == "requested" and confirmed_at != null and cancelled_at == null workflow: BookingConfirmation
-    %%action cancelRequestedBooking trigger-workflow when: status == "requested" and cancelled_at != null workflow: BookingCancellation
-    %%action cancelConfirmedBooking trigger-workflow when: status == "confirmed" and cancelled_at != null workflow: BookingCancellation
-    %%action checkInBooking trigger-workflow when: status == "confirmed" and checked_in_at != null and cancelled_at == null workflow: BookingAttendance
-    %%action markBookingAbsent trigger-workflow when: status == "confirmed" and absent_marked_at != null and checked_in_at == null and cancelled_at == null workflow: BookingNoShow
-
-%%meta name: Booking Confirmation
-%%meta kind: workflow
-%%workflow BookingConfirmation entity: Booking kind: saga trigger: rule
-flowchart TD
-    A([Confirmation recorded]) --> B[Mark the booking confirmed]
-    B --> C([Confirmed])
-
-    %%step B UpdateEntity field: status value: confirmed
-
-%%meta name: Booking Cancellation
-%%meta kind: workflow
-%%workflow BookingCancellation entity: Booking kind: saga trigger: rule
-flowchart TD
-    A([Cancellation recorded]) --> B[Mark the booking cancelled]
-    B --> C([Released])
-
-    %%step B UpdateEntity field: status value: cancelled
-
-%%meta name: Booking Attendance
-%%meta kind: workflow
-%%workflow BookingAttendance entity: Booking kind: saga trigger: rule
-flowchart TD
-    A([Arrival recorded]) --> B[Mark the booking attended]
-    B --> C([Attended])
-
-    %%step B UpdateEntity field: status value: attended
-
-%%meta name: Booking No Show
-%%meta kind: workflow
-%%workflow BookingNoShow entity: Booking kind: saga trigger: rule
-flowchart TD
-    A([Absence recorded]) --> B[Mark the booking a no-show]
-    B --> C([No-show])
-
-    %%step B UpdateEntity field: status value: no_show
+%%rbac role:reception|manager on Booking.submit
+%%rbac role:reception|manager on Booking.confirm
+%%rbac role:manager on Booking.reject
+%%rbac role:reception|manager on Booking.check_in
+%%rbac role:reception|manager on Booking.cancel
+%%rbac role:manager on Booking.mark_absent
+%%rbac role:manager on Booking.reopen
 ```
 
 Rules the checker enforces:
@@ -799,20 +777,16 @@ Rules the checker enforces:
   lifecycle column is `approval_status` or `fulfillment_status` gets `EML500`,
   and the generated application has a machine with nothing to write to. Name the
   column `status`; keep any second, descriptive enum column beside it.
-- **Every state a transition reaches needs a saga that writes it** —
-  `%%step <node> UpdateEntity field: status value: <state>` on the entity (or
-  `entity: <Entity> targetSource: <fk>` from another one). A state no saga
-  writes is one no record can ever reach, because no person may set it: `EML507`,
-  once per machine, naming the states. A saga that writes a value the machine
-  does not draw is `EML508`. Start each saga from a `%%rule` action whose
-  `when:` names the **current state and the fact the move depends on**
-  (`status == "requested" and confirmed_at != null`): the current state in the
-  condition is what stops the rule firing again once the saga has moved the
-  record on, because the runtime does not de-duplicate a saga.
-- **No `%%rbac` names a transition.** A transition is not a permission a role
-  can hold — `%%rbac role:manager on Booking.confirm` is `EML215`, and the fixer
-  removes the line. Say who may record the fact instead: the role that may write
-  `confirmed_at` is `%%rbac … on Booking.update`.
+- **No rule or saga moves a record a button moves.** A `%%rule` whose only
+  actions start sagas that each write the state and clear `_at` columns is the
+  pattern models used before buttons existed; it would move the record a second
+  time behind the button's back. The checker reports it (`EML512`) and the fixer
+  removes the rule and its sagas, keeping the `_at` columns. A saga that writes a
+  value the machine does not draw is `EML508`; one that writes a drawn state moves
+  the record only along a drawn edge.
+- **Every `%%rbac` move names a move the machine draws** — an event, a
+  `from->to` edge, or `reopen`. Anything else is `EML214`, which lists the moves
+  on offer.
 - **The state field is never placed in a `%%section` row** — `EML178`, which
   the fixer repairs by removing it. It is shown read-only in the form's header
   and as a list column, and its absence from every row is not a gap: `EML170`
@@ -825,7 +799,7 @@ Rules the checker enforces:
 - **An initial transition is required** — `[*] --> firstState`. Missing is
   `EML421`, auto-repaired.
 - **A terminal state is required** — `lastState --> [*]`. Missing is `EML422`,
-  auto-repaired.
+  auto-repaired. It is where the record becomes Final.
 - **Back the states with a `%%enum`** and bind it to the status column with
   `%%field`. The enum is matched by **value overlap**, not by name — the checker
   picks whichever declared enum shares the most values with the machine's states
@@ -842,26 +816,28 @@ Rules the checker enforces:
   order that is `pending_approval` while its approval task is `pending` costs
   nothing and removes the ambiguity.
 
-**No person writes a state, the administrator included.** In both generated
-stacks a request that carries the state field is handled the same way: on create
-the value is dropped and the record starts in the initial state; on update a
-value equal to the stored one is dropped, so a form sending the whole record back
-still saves, and any other value is refused with **403 Forbidden** and
-`details.code: "STATE_FIELD_SYSTEM_MANAGED"`. The refusal is about who writes,
-not about roles, so the master role is refused the same write. The diagram still
-decides which moves exist: every transition is seeded into
-`sys_workflow_transitions`, and a saga that writes a state the diagram does not
-draw is a model error the checker reports. Draw every move you intend the
-workflows to make, including the ones that go backwards: `confirmed --> requested
-: reopen` is one line, and it needs its own rule and saga.
+**What the generated application does with it.** In both stacks:
 
-`GET /api/workflows/transitions` returns the stored edges, narrowable with
-`?table=` and `?from=`. A screen uses it to say where a record can go next — it
-never offers a person the move.
+| Request | Answer |
+|---|---|
+| `GET /api/bus/<entity>/<id>/actions` | The moves this person may press from where the record is |
+| `POST /api/bus/<entity>/<id>/transition` with `{ "event": … }` or `{ "to": … }` and `If-Match` | The record, moved; `428` without `If-Match`, `409` `VERSION_CONFLICT` when someone moved it first |
+| a move the diagram does not draw from here | `409`, `details.code: "INVALID_TRANSITION"` |
+| a move the caller's roles are not given | `403`, `details.code: "TRANSITION_FORBIDDEN"` |
+| a move a refusing rule forbids, judged on the record as the move leaves it | `422`, with the rule's message |
+| a save or delete of a Final record | `409`, `details.code: "RECORD_FINAL"` |
+| a save that changes the state field | `403`, `details.code: "STATE_FIELD_SYSTEM_MANAGED"` — for every role, the administrator included |
+
+A move runs in one transaction with the workflows bound to it, and the rules that
+start a process run again on the moved record — a rule keyed on
+`stage == "closed_won"` starts its process when the deal is won, and a Final
+record is locked, so it cannot start it twice. A failure leaves the record where
+it was, with the reason. `GET /api/bus/<entity>?awaiting=me` lists the records
+waiting for the caller.
 
 The word after the colon is the **transition event**. It names the move in the
-diagram, the viewers and the generated manual; it is not an operation `%%rbac`
-can grant (§6).
+diagram, the viewers, the generated manual and the button ("Close won"); an edge
+with no label is the button "Move to <state>".
 
 ### 5.3 `kind: saga` — a multi-step process
 
@@ -1029,6 +1005,8 @@ Three mechanical rules that cause most saga failures:
 %%rbac role:admin on Order.delete             # a CRUD operation
 %%rbac role:sales|manager on Deal.update      # `|` is OR
 %%rbac role:admin on Customer.*               # all four operations
+%%rbac role:sales_manager on Deal.close_won   # a move of Deal's flow (§5.2)
+%%rbac role:sales_ops on Deal.reopen          # Reopen, from a Final state
 ```
 
 **It restricts; it does not grant.** A target no directive names is open to any
@@ -1036,16 +1014,20 @@ authenticated caller. One or more directives close that target to the union of
 the roles they name. Role names match case-insensitively, and a role flagged
 `is_admin` — the master role — bypasses.
 
-**The master bypass is over access, not over who writes a state.** It answers
-"may this caller do this thing", so it opens any `%%rbac` target. It does not let
-anybody change a state field: that is the workflows' alone (§5.2), and an
-administrator's write to it is refused like everyone else's.
+**A user with several roles has the union of what they grant.** A role only ever
+adds; there is no deny.
 
-`<op>` is a CRUD operation — `create` `read` `update` `delete` `*`. A transition
-event is **not** an operation a role can hold, because no person moves a record
-along an edge (§5.2): `%%rbac role:sales_manager on Quote.approve` is `EML215`,
-and the fixer deletes the line. To say who may approve, restrict who may record
-the approval — the column the approval rule reads — with `Quote.update`.
+**The master bypass is over access, not over how a state changes.** It answers
+"may this caller do this thing", so it opens any `%%rbac` target and presses any
+move. It does not let anybody type a state field: a record moves by its buttons
+(§5.2), and an administrator's write to the column is refused like everyone
+else's.
+
+The target is a CRUD operation — `create` `read` `update` `delete` `*` — or a
+**move** of the entity's flow (§5.2): its event (`Quote.approve`), `from->to` for
+an edge with no label, or `reopen`. A move a line names is the button only those
+roles see, and a role given a move may press it without being allowed to edit the
+record; a move no line names is open to whoever may update the record.
 
 Put `%%rbac` directives beside the ERD.
 
@@ -1122,8 +1104,8 @@ operation stays open. `EML223` reports it.
 
 Validation here is strict, and nearly every code is an **error** rather than a
 warning: `EML210` syntax, `EML211` no role named, `EML213` undeclared entity,
-`EML214` a target that is not an operation, `EML215` a target that is a
-transition — a state is changed only by background workflows. A `%%rbac` rule
+`EML214` a target that is neither an operation nor a move the entity's flow
+draws. A `%%rbac` rule
 that does not compile is not a rule that does nothing — it is an access
 restriction its author believes is in place and is not.
 
@@ -1137,7 +1119,7 @@ the checker reads it.
 |---|---|---|
 | `%%meta` | `%%meta <key>: <value>` | compiled |
 | `%%enum` | `%%enum <Name>: a, b, c` | compiled |
-| `%%field` | `%%field <E>.<attr> <k>: <v>` | compiled *(`enum:` and `help:` keys)* |
+| `%%field` | `%%field <E>.<attr> <k>: <v>` | compiled *(`enum:`, `help:`, and the field logic `display:`, `readonly:`, `mandatory:` — §3.7.9)* |
 | `%%index` | `%%index <E>(<a>[, <b>]) [unique]` | compiled |
 | `%%category` | `%%category name: X; icon: Y; entities: A, B` | compiled |
 | `%%section` | `%%section entity: <E>; name: <H>; help: <why>; rows: a, b \| c` | compiled *(the form layout, §3.7.6)* |

@@ -325,8 +325,8 @@ mechanical faults the checker catches by reading, which a human eye slides past:
 | Every state machine has `[*] --> <first>` and `<last> --> [*]` | `EML421` `EML422` |
 | Every state is a value of the enum bound to that status column | `EML426` `EML428` |
 | Every `%%rbac` / `%%rule` / `%%workflow` / `%%hook` / `%%step` names a declared entity | `EML213` `EML251` `EML242` `EML202` `EML266` |
-| Every `%%rbac` target is a CRUD operation — never a transition, because no person changes a state | `EML214` `EML215` |
-| Every state a machine can move into is written by a saga's `UpdateEntity` step, and every value a saga writes is a state the machine draws | `EML507` `EML508` |
+| Every `%%rbac` target is a CRUD operation or a move the entity's flow draws — its event, `from->to`, or `reopen` | `EML214` |
+| No rule and saga move a record its buttons move, every value a saga writes is a state the machine draws, `final` and `error` are not state names, and a move no `%%rbac` line names is listed | `EML512` `EML508` `EML509` `EML511` |
 | No `%%section` row places the state field — it is shown read-only in the form's header and always in the list grid | `EML178` |
 | A cross-entity step's `targetField` is a column of the target entity; a child reaching its parent uses `targetSource: <fk>` | `EML275` |
 | Every `kind: saga` marked `trigger: rule` is named by some `%%action` | `EML286` |
@@ -435,7 +435,7 @@ meant. Everything else needs a decision, which is why it is handed back untouche
 | `EML174` | A `%%section` row of three or more columns | Splits it into rows of two |
 | `EML175` | A column placed in two `%%section` rows | Removes the later placement |
 | `EML178` | A `%%section` row placing the state field | Removes it from the row (a section left empty goes); the state is shown in the form's header |
-| `EML215` | A `%%rbac` line granting a state transition | Deletes the line; no person changes a state |
+| `EML512` | A rule and the sagas it starts that only move a record its buttons move | Deletes the rule and the sagas; keeps the `_at` columns and rewrites their help |
 | `EML287` | A `%%action when:` written in camelCase | Rewrites it as the snake_case column |
 | `EML421` | State machine with no initial transition | Adds `[*] --> <first>` |
 | `EML422` | State machine with no terminal state | Adds `<last> --> [*]` |
@@ -816,15 +816,17 @@ the model matches the business — and for the reasoning behind the ones it can.
    `EML149`; walk each one and either declare the parent or decide against it,
    and clear any `EML150` by taking the child out of its category.
 13. Every entity with a status has a `kind: state` workflow, with an initial
-   transition and a terminal state — and every state it can move into is
-   written by a saga a rule starts from a recorded fact, never by a person
-   (`EML507`). The state field sits in no `%%section` row (`EML178`): the
+   transition and a terminal state — the record moves by its action buttons,
+   along the edges the diagram draws, and no rule or saga moves it behind them
+   (`EML512`). The state field sits in no `%%section` row (`EML178`): the
    generated form shows it read-only in its header and the list grid always
    shows it.
 14. Every rule that must *do* something has an `%%action` — not just a flowchart.
 15. Every cross-entity effect is a hook, an action, or a saga step.
-16. Every restricted operation has a `%%rbac` directive. No directive names a
-   transition (`EML215`): a state is changed only by background workflows.
+16. Every restricted operation has a `%%rbac` directive, and every move that is
+   a particular role's — closing a deal, approving a quote, reopening a closed
+   record — names that role (`%%rbac role:<roles> on <Entity>.<event>`). A move
+   no line names is open to whoever may update the record (`EML511` lists them).
 17. Every entity is named by at least one `%%rbac … .read` directive, so it
    belongs to a functional role — and every role that may act on an entity can
    also read it (§6). A model where one role sees all forty tables is the same

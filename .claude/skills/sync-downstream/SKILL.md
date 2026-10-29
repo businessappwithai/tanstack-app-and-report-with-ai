@@ -124,7 +124,7 @@ cd $O/common && bun run build:language-tools && bun run check:language-tools
 ```
 
 **Build them on CI's runtime.** `Bun.build` output depends on the bun version and
-the platform; `root-ci.yml` pins `BUN_VERSION: 1.4.3` on `linux-x64`. Building on
+the platform; `root-ci.yml` pins `BUN_VERSION: 1.4.4` on `linux-x64`. Building on
 anything else commits bytes CI rejects while `--check` passes locally — which is
 exactly how the branch this came from shipped a build from an older bun. `--check` prints
 which case a mismatch is; read it rather than rebuilding reflexively.

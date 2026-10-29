@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SessionStart hook for Claude Code cloud sessions.
 #
-# This project runs on exactly one Bun (see CLAUDE.md, "Bun 1.4.3, and only Bun 1.4.3")
+# This project runs on exactly one Bun (see CLAUDE.md, "Bun 1.4.4, and only Bun 1.4.4")
 # and the cloud image ships whichever Bun it was built with. On 1.4.2 `bun check`
 # silently runs a package script named `check` instead of the type checker, so a
 # session that starts on the wrong Bun can report a clean type-check it never ran.

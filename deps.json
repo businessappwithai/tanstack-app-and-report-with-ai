@@ -16,7 +16,7 @@
     "Moving a pin is a deliberate step, taken by running the checks:",
     "",
     "  ./deps.sh --update            resolve each branch to its head and rewrite `ref`",
-    "  cd common && bun run check    prove the new pins pass before committing them"
+    "  cd common && bun run check:all  prove the new pins pass before committing them"
   ],
   "dependencies": [
     {
@@ -24,7 +24,7 @@
       "repository": "businessappwithai/app-with-ai-tanstack",
       "path": "app-with-ai-tanstack",
       "branch": "main",
-      "ref": "28da4ebe9e7f693b46b4f2b6e21bd577d65aac8b",
+      "ref": "75605e1782e63286a4afd6b410c5ee4908d739cd",
       "install": true,
       "needed_for": [
         "language/cli/src/generate/jdm.ts imports packages/web/src/lib/jdm-converter.ts and packages/editors/src/lib/mermaid-flowchart-parser.ts across the repository boundary, on every generation path — so every --stack target needs this checkout, not just the heavy one",
@@ -39,7 +39,7 @@
       "repository": "businessappwithai/enterprise_reporting_tanstack",
       "path": "enterprise_reporting_tanstack",
       "branch": "main",
-      "ref": "3b4b303e074d4251753c583b97f20cbd7edfee52",
+      "ref": "243240eefdeafe4bfec874258dea3c54f3f4de65",
       "install": false,
       "install_note": "Nothing local reads this checkout's node_modules — it is a Docker build context, and the image build runs its own install inside the image, so `./deps.sh --install` skips it.",
       "needed_for": [

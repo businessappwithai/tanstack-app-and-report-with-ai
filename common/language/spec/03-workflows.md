@@ -122,17 +122,24 @@ LastState  --> [*]
 ```
 
 - States are treated as a **status enum** for the bound entity.
-- Transitions define the **moves a background workflow may make**; the label is
-  the event's name.
+- Transitions define the **moves a record makes**; the label is the event's name
+  and the button's.
 - Bind with `%%workflow ... kind: state`.
-- **The state field is system-managed** (`language/state-field.ts`): the column
-  the machine drives — `status`, else `state`, else `stage` — is never changed by
-  a person through a form or a direct API write. Only background workflows change
-  it: a saga's `UpdateEntity` step (started by a rule's `trigger-workflow` or its
-  own trigger), a hook, or the application's code. A new record starts in the
-  initial state. Every state a transition reaches needs such a saga (`EML507`), a
-  saga may write only states the machine draws (`EML508`), and no `%%rbac` may
-  name a transition (`EML215`).
+- **The record lifecycle** (`language/state-field.ts`): a save puts a record in
+  Draft and runs its rules and workflows; accepted, it moves to the machine's
+  first state (or to Final when the entity has no machine); refused, it goes to
+  Error with the reason and stays editable. From there it moves only by its
+  **action buttons**, along drawn edges; every end state (`x --> [*]`) is Final
+  and locked, and Reopen takes it back to Draft. `final` and `error` are reserved
+  (`EML509`).
+- **The state field is never typed**: the column the machine drives — `status`,
+  else `state`, else `stage` — is never changed through a form or a direct API
+  write. A saga may write a state too, but only along a drawn edge, and only one
+  the machine draws (`EML508`). A rule and saga pair that only moves a record its
+  buttons move is retired (`EML512`, auto-fixed).
+- **Each move is a role's**: `%%rbac role:<roles> on <Entity>.<event>` (or
+  `from->to`, or `reopen`). A move no line names is open to whoever may update
+  the record (`EML511`, an info); Reopen no line names is the administrator's.
 - **Where it is shown.** The generated form shows the state read-only in its top
   header, beside the record's title; the list grid always shows it as a column.
   It is never an input, and no `%%section` row places it (`EML178`).

@@ -248,7 +248,7 @@ generated; when the two disagree, the generator's copy is the language.
 | **core** | `erDiagram` entities, attributes, `PK/FK/UK/OPTIONAL/NULL/UNIQUE`, all 8 cardinalities, plus `%%index`, `%%enum`, `%%field enum:` and `%%category` | Compiled |
 | **rules** | `flowchart` decision flows → JDM via shape semantics; `%%action` → JDM decision table | Compiled |
 | **workflows** | `%%hook` (both forms, all 13 types), `stateDiagram-v2` state machines, `%%workflow kind: saga` with `%%step` and `%%loop` | Compiled |
-| **access** | `%%rbac` on CRUD operations — a state transition is not grantable (`EML215`): the state field is system-managed, written only by background workflows | Compiled to `sys_operation_access`, enforced by the generated guard, which also refuses any person's write to a state field |
+| **access** | `%%rbac` on CRUD operations and on the moves of a record's flow (`<Entity>.<event>`, `from->to`, `reopen`) — a user has the union of their roles' grants | Compiled to `sys_access_grant`; one query (`sys_user_capability`) answers what a user may do, cached; the guard enforces operations, the transition service the moves, and no form writes a state field |
 | **help** | `%%field <E>.<col> help:` and `%%entity <Name> help:` (or `description:`) | Compiled — to `sys_column.description` / `sys_table.description`, shown in the app, and the whole "what it is for" column of `manual.html` |
 | **validated** | `%%rule`, `%%trigger`, and the `%%entity` keys other than `help:`/`description:` | No compiler yet; `checker.ts` enforces syntax so a malformed one fails rather than being dropped |
 | **reserved** | `%%field` keys other than `enum:` and `help:` | Renderer-safe, documented, inert |
@@ -273,7 +273,7 @@ author assume otherwise:
 | **core** (entities, fields, enums, indexes) | Compiled | Compiled — tables, Zod schemas, forms, columns | Compiled |
 | **rules** | Compiled — seeded and evaluated by the rules engine | Emitted as JDM under `rules/`, **not wired up** | Emitted as JDM |
 | **workflows** (hooks, state machines, sagas) | Compiled — handlers, transitions, guard enforcement | **Not compiled** | Not compiled |
-| **access** (`%%rbac`) | Compiled — `sys_operation_access`; never a transition (the state field is system-managed) | **Not compiled** — the generated handlers call `requireAuth()`; add `requirePermission()` and the role strings yourself | Not compiled |
+| **access** (`%%rbac`) | Compiled — `sys_access_grant`: operations, and each state-machine move (an action button) to the roles named | **Not compiled** — the generated handlers call `requireAuth()`; add `requirePermission()` and the role strings yourself | Not compiled |
 | **help** | Compiled — dictionary and `manual.html` | Field labels only | Not compiled |
 
 An `enterprise-reporting` model is therefore worth writing in full anyway: the

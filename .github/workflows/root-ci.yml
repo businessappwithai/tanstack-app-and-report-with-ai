@@ -89,17 +89,17 @@ on:
 permissions:
   contents: read
 
-# One pin. 1.4.3 is what app-with-ai-tanstack itself requires (`engines.bun`
-# in every one of its manifests, the generator that ships both CLIs included),
-# what the Dockerfiles the `appwithai` CLI generates run on, and the first Bun
-# with `bun check`. The `appwithai-wasm` CLI used to be checked on a second pin,
-# 1.3.11; upstream dropped 1.3 when it moved to 1.4.3, so that job was proving
-# the CLI on a runtime its own package no longer supports. `check-clis.ts`
+# One pin. 1.4.4 is what app-with-ai-tanstack itself requires (`engines.bun`
+# in every one of its manifests, the generator that ships both CLIs included)
+# and what the Dockerfiles the `appwithai` CLI generates run on; all four
+# repositories moved to it together. The `appwithai-wasm` CLI used to be checked
+# on a second pin, 1.3.11; upstream dropped 1.3 when it moved to 1.4, so that job
+# was proving the CLI on a runtime its own package no longer supports. `check-clis.ts`
 # prints the bun each result came from.
 #
 # Moving it forward is a deliberate step, taken by running the checks.
 env:
-  BUN_VERSION: "1.4.3"
+  BUN_VERSION: "1.4.4"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -212,7 +212,7 @@ jobs:
       # than serving a validator that disagrees with the language it ships
       # beside.
       #
-      # It belongs here as its own step rather than inside `bun run check`,
+      # It belongs here as its own step rather than inside `bun run check:all`,
       # because this job never runs that script: it runs check:models and
       # type-check as separate steps, so anything added to `check`
       # alone would be local-only and CI would never see it.

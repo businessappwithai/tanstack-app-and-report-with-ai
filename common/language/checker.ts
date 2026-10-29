@@ -28,8 +28,16 @@ import type { EmlAttribute, EmlEntity, EmlModel, EmlRule, EmlWorkflow } from "./
 import { parseEml } from "./cli/src/parser";
 import { caps } from "./cli/src/util";
 import { loadLanguageDefinition, stepNodeTypes } from "./index";
+import { parseLogic } from "./field-logic";
 import { parseSectionDirectives, sectionsByEntity, UNPLACED_SECTION } from "./sections";
-import { stateFieldOf } from "./state-field";
+import { findRetiredMoves } from "./move-facts";
+import {
+  LIFECYCLE_DRAFT,
+  normalizeEvent,
+  REOPEN_EVENT,
+  RESERVED_STATE_NAMES,
+  stateFieldOf,
+} from "./state-field";
 
 // ---------------------------------------------------------------------------
 // Diagnostic types
@@ -314,8 +322,8 @@ class CheckEngine {
   private issues: Issue[] = [];
   /**
    * `Entity.field=value` for every value a saga's UpdateEntity step writes.
-   * Filled by checkStepDirectives and read by EML507, which asks whether every
-   * state a machine can move into has a background workflow that puts it there.
+   * Filled by checkStepDirectives and read by EML508, which asks whether every
+   * state a saga writes is one its entity's machine draws.
    */
   private sagaWrites = new Set<string>();
   private src: SourceIndex;
@@ -340,7 +348,18 @@ class CheckEngine {
        parent's window linked on the foreign key it already declared. */
     "parent",
   ]);
-  private validFieldKeys = new Set(["enum", "ui", "default", "min", "max", "help", "format"]);
+  private validFieldKeys = new Set([
+    "enum",
+    "ui",
+    "default",
+    "min",
+    "max",
+    "help",
+    "format",
+    "display",
+    "readonly",
+    "mandatory",
+  ]);
   private validMetaKeys = new Set(["name", "kind", "version", "entity", "stack", "description"]);
   private validWorkflowKinds = new Set(["hook", "state", "saga"]);
   private validTriggerSources = /^(cron:|webhook:|message:)/;
@@ -920,6 +939,85 @@ class CheckEngine {
   // EML140-EML149: %%field directive checks
   // -------------------------------------------------------------------------
 
+  /**
+   * `%%field <E>.<c> display: | readonly: | mandatory: <logic>` — Compiere's
+   * Display, Read Only and Mandatory Logic. language/field-logic.ts is the one
+   * reading of the syntax; the generated form and API evaluate with a copy of it.
+   */
+  private checkFieldLogic(
+    entityName: string,
+    attrName: string,
+    key: string,
+    expression: string,
+    lineNo: number
+  ): void {
+    const parsed = parseLogic(expression);
+    if (!parsed.ok) {
+      this.error("EML156", `%%field ${entityName}.${attrName} ${key}: does not parse — ${parsed.error}`, {
+        line: lineNo,
+        hint: "Write Compiere logic: @column@=value, @column@!value (not equal), >, <, >=, <=, joined by & and | and read left to right. A Yes/No column is Y or N; an empty value is ''.",
+        context: expression,
+      });
+      return;
+    }
+    const entity = this.model.entities.find((candidate) => candidate.name === entityName);
+    if (!entity) return;
+    const columns = new Set(entity.attributes.map((attribute) => attribute.name));
+    for (const variable of parsed.logic.variables) {
+      if (!columns.has(variable)) {
+        this.error(
+          "EML157",
+          `%%field ${entityName}.${attrName} ${key}: reads @${variable}@, which ${entityName} does not declare.`,
+          {
+            line: lineNo,
+            hint: `Field logic reads the record being edited, so it can name only ${entityName}'s own columns: ${[...columns].join(", ")}.`,
+          }
+        );
+      }
+    }
+    if (key === "display" && parsed.logic.variables.includes(attrName)) {
+      this.warn(
+        "EML158",
+        `%%field ${entityName}.${attrName} display: depends on its own value.`,
+        {
+          line: lineNo,
+          hint: "A field hidden by its own value can never be shown again from the form, because nobody can see it to change it. Make it depend on another column.",
+        }
+      );
+    }
+  }
+
+  /**
+   * EML159 — logic on a column no person edits: the key, or the state field a
+   * `kind: state` workflow drives. Neither is ever an input on the form, so a
+   * condition on it is never evaluated.
+   */
+  private checkFieldLogicTargets(entityAttrMap: Map<string, Set<string>>): void {
+    const stateFields = this.stateFields();
+    for (const { lineNo, text } of this.src.findAll(/^\s*%%field\b/)) {
+      const m = text.trim().match(/^%%field\s+(\w+)\.(\w+)\s+(display|readonly|mandatory)\s*:/);
+      if (!m) continue;
+      const [entityName, attrName, key] = caps(m, 3);
+      if (!entityAttrMap.get(entityName)?.has(attrName)) continue;
+      const entity = this.model.entities.find((candidate) => candidate.name === entityName);
+      const isKey = entity?.primaryKey === attrName;
+      const isState = stateFields.get(entityName) === attrName;
+      if (!isKey && !isState) continue;
+      this.warn(
+        "EML159",
+        `%%field ${entityName}.${attrName} ${key}: is on ${isKey ? "the primary key" : "the state field"}, which is never an input.`,
+        {
+          line: lineNo,
+          hint: isKey
+            ? "The key is on no form. Put the logic on the column a person fills in."
+            : "The state field is system-managed: shown read-only in the record header and written only by workflows. Logic may read it (@" +
+              attrName +
+              "@=…) on other fields, but cannot be placed on it.",
+        }
+      );
+    }
+  }
+
   private checkFieldDirectives(): void {
     const entityNames = new Set(this.model.entities.map((e) => e.name));
     const enumNames = new Set(this.model.enums.map((e) => e.name));
@@ -929,7 +1027,10 @@ class CheckEngine {
     }
 
     // Re-scan source for %%field directives (model doesn't expose them directly)
-    const fieldLines = this.src.findAll(/^%%field\b/);
+    // Indented or not: the reference models indent their directives to sit
+    // inside the block they annotate, and an anchor at column 0 skipped every
+    // one of them, so a misspelt key or an undeclared enum went unreported.
+    const fieldLines = this.src.findAll(/^\s*%%field\b/);
     for (const { lineNo, text } of fieldLines) {
       const m = text.trim().match(/^%%field\s+(\w+)\.(\w+)\s+([A-Za-z_]\w*)\s*:\s*(.+)$/);
       if (!m) {
@@ -995,7 +1096,14 @@ class CheckEngine {
           }
         );
       }
+
+      // EML156-EML159: display:, readonly: and mandatory: — field logic
+      if (key === "display" || key === "readonly" || key === "mandatory") {
+        this.checkFieldLogic(entityName, attrName, key, value.trim(), lineNo);
+      }
     }
+
+    this.checkFieldLogicTargets(entityAttrMap);
 
     // EML146: A lifecycle column nobody bound to an enum.
     //
@@ -1795,6 +1903,13 @@ class CheckEngine {
     return fields;
   }
 
+  /** The states an entity's machines end (`x --> [*]`) — its Final states. */
+  private finalStates(entity: string): string[] {
+    return this.model.workflows
+      .filter((wf) => wf.entity === entity && wf.kind === "state")
+      .flatMap((wf) => wf.transitions.filter((t) => t.to === "[*]").map((t) => t.from));
+  }
+
   private checkRbac(): void {
     const entityNames = new Set(this.model.entities.map((e) => e.name));
     const crudOps = new Set([
@@ -1817,26 +1932,25 @@ class CheckEngine {
       "any",
     ]);
 
-    /** Transition events declared by an entity's state machines, normalised. */
-    const eventsFor = (entity: string): Set<string> => {
-      const events = new Set<string>();
+    /** The moves an entity's state machines draw — `[*]` edges are not moves. */
+    const movesOf = (entity: string) => {
+      const moves: Array<{ workflow: string; from: string; to: string; event?: string }> = [];
       for (const wf of this.model.workflows) {
         if (wf.entity !== entity || wf.kind !== "state") continue;
         for (const t of wf.transitions) {
-          if (t.event)
-            events.add(
-              t.event
-                .trim()
-                .toLowerCase()
-                .replace(/[\s-]+/g, "_")
-            );
+          if (t.from === "[*]" || t.to === "[*]") continue;
+          moves.push({ workflow: wf.name, from: t.from, to: t.to, event: t.event });
         }
       }
-      return events;
+      return moves;
     };
+    /** `entity:from->to` for every move some `%%rbac` line names — EML511 reports the rest. */
+    const guarded = new Set<string>();
 
     for (const { lineNo, text } of this.src.findAll(/^\s*%%rbac\b/)) {
-      const m = text.trim().match(/^%%rbac\s+(\S+)\s+on\s+([A-Za-z_]\w*)\.([A-Za-z_*]\w*)\s*$/);
+      const m = text
+        .trim()
+        .match(/^%%rbac\s+(\S+)\s+on\s+([A-Za-z_]\w*)\.([A-Za-z_*][\w-]*(?:->[A-Za-z_]\w*)?)\s*$/);
       if (!m) {
         this.error("EML210", `Invalid %%rbac syntax: "${text.trim()}"`, {
           line: lineNo,
@@ -1881,34 +1995,59 @@ class CheckEngine {
         continue;
       }
 
-      // EML214: the target must be a CRUD operation or a declared transition.
+      // EML214: the target must be a CRUD operation, a move the entity's state
+      // machine draws (by its event, or `from->to` for an edge with no label), or
+      // `reopen` (Final back to Draft). A move named here is the button only these
+      // roles see; the line is seeded into sys_access_grant.
       const lower = target.toLowerCase();
       if (crudOps.has(lower)) continue;
 
-      const events = eventsFor(entity);
-      // EML215: a state is moved only by background workflows, so a transition
-      // is not something a role can be granted. The line used to compile into
-      // sys_transition_access and let that role move the record by hand.
-      if (events.has(lower)) {
-        this.error(
-          "EML215",
-          `%%rbac on ${entity}.${target} grants a transition; a state is changed only by background workflows.`,
-          {
-            line: lineNo,
-            hint: `Remove the line. Nobody moves ${entity} to another state through a form: a %%rule's trigger-workflow starts a saga whose UpdateEntity step writes the state, when a person records the fact the move depends on (a decision, a date, an approver). Grant that column's write with ${entity}.update instead.`,
-          }
-        );
+      // The same reading as compileRbac: an edge the model labels wins (its own
+      // `reopen` included), and a Final state back to Draft is the lifecycle's reopen.
+      const moves = movesOf(entity);
+      const arrow = /^(\w+)->(\w+)$/.exec(target);
+      const named = arrow
+        ? moves.filter((move) => move.from === arrow[1] && move.to === arrow[2])
+        : moves.filter((move) => move.event && normalizeEvent(move.event) === normalizeEvent(target));
+      if (named.length > 0) {
+        for (const move of named) guarded.add(`${entity}:${move.from}->${move.to}`);
         continue;
       }
+      const finals = this.finalStates(entity);
+      if (arrow && finals.includes(arrow[1]!) && arrow[2]!.toLowerCase() === LIFECYCLE_DRAFT) continue;
+      if (!arrow && normalizeEvent(target) === REOPEN_EVENT && finals.length > 0) continue;
 
+      const offered = [
+        ...new Set(moves.map((move) => (move.event ? normalizeEvent(move.event) : `${move.from}->${move.to}`))),
+      ];
       this.error(
         "EML214",
-        `%%rbac on ${entity}.${target} names neither a CRUD operation nor a transition of ${entity}.`,
+        `%%rbac on ${entity}.${target} names neither a CRUD operation nor a move of ${entity}.`,
         {
           line: lineNo,
-          hint: events.size
-            ? `Use one of create, read, update, delete, * — or a transition of ${entity}: ${[...events].join(", ")}.`
-            : `Use one of create, read, update, delete, * — ${entity} declares no state machine to take a transition from.`,
+          hint: offered.length
+            ? `Use one of create, read, update, delete, * — or a move of ${entity}: ${offered.join(", ")}, ${REOPEN_EVENT}.`
+            : `Use one of create, read, update, delete, * — ${entity} declares no state machine to move along.`,
+        }
+      );
+    }
+
+    // EML511: a move no %%rbac line names is open to anyone who may update the
+    // entity, and the administrator. That is a sound default, so this is a note:
+    // it says which buttons every editor will see, so the choice is a visible one.
+    for (const wf of this.model.workflows) {
+      if (wf.kind !== "state" || !wf.entity || !entityNames.has(wf.entity)) continue;
+      const open = movesOf(wf.entity).filter(
+        (move) => move.workflow === wf.name && !guarded.has(`${wf.entity}:${move.from}->${move.to}`)
+      );
+      if (open.length === 0) continue;
+      const names = open.map((move) => (move.event ? normalizeEvent(move.event) : `${move.from}->${move.to}`));
+      this.info(
+        "EML511",
+        `${open.length} move${open.length === 1 ? "" : "s"} of "${wf.name}" ${open.length === 1 ? "is" : "are"} open to anyone who may update ${wf.entity}: ${[...new Set(names)].join(", ")}.`,
+        {
+          line: this.src.findLine(new RegExp(`^%%workflow\\s+${wf.name}\\b`)),
+          hint: `To limit a button to the roles that own it, add  %%rbac role:<role> on ${wf.entity}.<move>  — the move is its event, or from->to for an edge with no label.`,
         }
       );
     }
@@ -3371,32 +3510,38 @@ class CheckEngine {
       }
     }
 
-    // EML507: every state a machine can move into needs a background workflow
-    // that moves it there, because nobody may change the state through a form.
-    // The initial state is the system's to set on create; any other target of
-    // an edge must be written by a saga's UpdateEntity step.
     const stateFields = this.stateFields();
+
+    // EML509: `final` and `error` are lifecycle values — a record locked as done,
+    // and one whose Draft workflows failed. A machine drawing a state under either
+    // name would store a value the application reads as something else.
     for (const wf of this.model.workflows) {
       if (wf.kind !== "state" || !wf.entity) continue;
-      const field = stateFields.get(wf.entity);
-      if (!field) continue;
-      const unwritten = new Set<string>();
-      for (const t of wf.transitions) {
-        if (t.from === "[*]" || t.to === "[*]" || !t.to) continue;
-        const to = t.to.trim();
-        if (!this.sagaWrites.has(`${wf.entity}.${field}=${to}`)) unwritten.add(to);
+      for (const state of new Set([...wf.states, ...wf.transitions.flatMap((t) => [t.from, t.to])])) {
+        if (!(RESERVED_STATE_NAMES as readonly string[]).includes(state)) continue;
+        this.error("EML509", `State workflow "${wf.name}" draws a state named "${state}", which the record lifecycle reserves.`, {
+          line: this.src.findLine(new RegExp(`^\\s*(?:\\w+\\s*-->\\s*)?${state}\\b`)),
+          hint: `Rename it (e.g. ${state === "final" ? "completed" : "failed"}). Every state that ends the diagram (x --> [*]) is already Final, and Error is where a record whose workflows failed goes.`,
+        });
       }
-      if (unwritten.size > 0) {
-        const states = [...unwritten];
-        this.warn(
-          "EML507",
-          `State workflow "${wf.name}" can move ${wf.entity} into ${states.length} state${states.length === 1 ? "" : "s"} no background workflow writes: ${states.join(", ")}.`,
-          {
-            line: this.src.findLine(new RegExp(`^%%workflow\\s+${wf.name}\\b`)),
-            hint: `Only background workflows change ${wf.entity}.${field}. For each state, declare a saga whose step is  %%step B UpdateEntity entity: ${wf.entity} targetField: id field: ${field} value: <state>, and a %%rule action that starts it (trigger-workflow) when the fact the move depends on is recorded on the record.`,
-          }
-        );
-      }
+    }
+
+    // EML512: a rule and saga pair that moves a record when a person records the
+    // time of a move. A button is the move now, so these would move the record a
+    // second time behind it. The fixer removes them (language/move-facts.ts).
+    for (const section of findRetiredMoves(this.src.text(), (entity) => stateFields.get(entity)).sections) {
+      this.warn(
+        "EML512",
+        section.kind === "saga"
+          ? `Saga "${section.name}" only moves ${section.entity} to a state; an action button makes that move now.`
+          : section.kind === "action"
+            ? `Action "${section.name}" only starts a move saga for ${section.entity}; an action button makes that move now.`
+            : `Rule "${section.name}" only starts move sagas for ${section.entity}; an action button makes those moves now.`,
+        {
+          line: section.line,
+          hint: "Remove it — the fixer does. The <state>_at columns stay: the application stamps them when the record reaches the state.",
+        }
+      );
     }
 
     // EML508: a saga writing a state its entity's machine never draws would put
@@ -3578,7 +3723,7 @@ export const AUTO_FIXABLE_CODES = new Set([
   "EML174", // a %%section row of three or more → split it into rows of two
   "EML175", // a column placed twice → remove the later placement
   "EML178", // the state field placed in a %%section row → remove it from the row
-  "EML215", // %%rbac granting a state transition → delete the line
+  "EML512", // a move rule or saga a button replaces → remove it (language/move-facts.ts)
 ]);
 
 /** Structured output written to <file>.error for the fixer to consume. */

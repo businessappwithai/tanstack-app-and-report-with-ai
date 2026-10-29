@@ -22,7 +22,7 @@
  *   PGHOST=/var/run/postgresql PGPORT=5432 PGUSER=postgres bun scripts/check-reporting-pack.ts
  *
  * Skips itself with a clear message when no PostgreSQL is reachable, so a
- * checkout without one still runs the rest of `bun run check`. Pass
+ * checkout without one still runs the rest of `bun run check:all`. Pass
  * `--require-server` to make that a failure instead: CI does, because a check
  * that quietly passes when its database never came up is indistinguishable
  * from one that ran, and the whole point of this file is to not be that.

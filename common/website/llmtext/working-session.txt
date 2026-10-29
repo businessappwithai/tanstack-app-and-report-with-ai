@@ -419,7 +419,7 @@ moves, the rules and their actions (§4), the hooks and
 sagas for every cross-entity effect (§5.1, §5.3) — for a write to another
 entity, which of its rows the step aims at (`targetSource` or `targetField`,
 else `EML265`) — one `%%rbac … .read` line per entity and the restrictions on
-writes (§6; a transition is never granted — `EML215`), and the `%%report` questions per role (§7). Present
+writes, and which role presses each move of each flow (§5.2, §6), and the `%%report` questions per role (§7). Present
 it as one table per kind; in *walk me through it*, this is the last gate before
 the file is finished.
 
