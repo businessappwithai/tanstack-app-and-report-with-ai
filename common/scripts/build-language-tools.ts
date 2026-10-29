@@ -5,7 +5,7 @@
  * `html/checker.js` and `html/fixer.js` are what an author — or a model writing
  * a model — validates a `.eml.mmd` against without a checkout, a Bun install or
  * a terminal. They sit at the site root rather than under `assets/` because
- * their URL is the interface: `website/llmtext/llms.txt` tells a language model to
+ * their URL is the interface: `website/llmtext/llms-full.txt` tells a language model to
  * run its output past appwithai.org/checker.js, and a path that reads like an
  * implementation detail invites being moved.
  *

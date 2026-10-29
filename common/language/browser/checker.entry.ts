@@ -160,7 +160,6 @@ export function formatIssueDetail(issue: CheckedIssue): string {
  */
 export function formatNextSteps(report: CheckReport): string {
   const { errors, warnings } = report.counts;
-  const dictionary = report.issues.filter((issue) => DICTIONARY_COMPLETENESS.has(issue.code));
   const fixable = report.issues.filter((issue) => issue.autoFixable);
   const manual = report.issues.filter((issue) => !issue.autoFixable);
   const first = manual.find((issue) => issue.severity === "error") ?? manual[0];
@@ -189,84 +188,16 @@ export function formatNextSteps(report: CheckReport): string {
       `uncover a problem an earlier error was masking, so a report from before your edit ` +
       `describes a document that no longer exists.`
   );
-  /*
-   * The dictionary warnings are not optional, and this step used to say they
-   * were.
-   *
-   * The closing step read "clearing the N warnings is optional" for every
-   * warning alike. But the authoring protocol requires a complete Application
-   * Dictionary — help on every entity and every column, the FK modifier on
-   * every reference, an enum binding on every closed vocabulary, a `name:` on
-   * every category — and `audit-model.mjs` fails a model that is missing any of
-   * it. So a model could clear the checker, be told in the checker's own last
-   * words that the rest was optional, and then fail the audit the same protocol
-   * requires it to pass. The reader here is usually a language model, and the
-   * report is the last thing it reads: a blanket "optional" is the sentence it
-   * acts on.
-   *
-   * These nine are the ones that silently degrade what the generated application
-   * shows — a lookup that renders a raw uuid, a dropdown that becomes a free
-   * text box, a form and a manual that explain nothing, a grouping the parser
-   * drops, a form with no sections. None of them stops the generator, which is exactly why none of them
-   * announces itself anywhere else.
-   */
-  if (errors > 0) {
-    steps.push(
-      `Repeat until the last line reads OK. The generator refuses this model while any error stands.`
-    );
-  } else if (dictionary.length > 0) {
-    const codes = [...new Set(dictionary.map((issue) => issue.code))].sort().join(", ");
-    const other = warnings - dictionary.filter((issue) => issue.severity === "warning").length;
-    steps.push(
-      `The generator accepts this model, and it is not finished. ${dictionary.length} of these ` +
-        `(${codes}) are Application Dictionary gaps: the dictionary is what the application ` +
-        `draws every screen from, and each one leaves it recording less than the model knows — ` +
-        `a reference as text rather than a lookup, a closed vocabulary as a free text box, a ` +
-        `field and its manual entry with nothing under it, a form with no sections. Clear them. \`node audit-model.mjs ` +
-        `<file>.mmd\` fails while any stand, and the authoring protocol requires it to exit 0.` +
-        (other > 0
-          ? ` The remaining ${other} warning${other === 1 ? " is" : "s are"} advisory.`
-          : "")
-    );
-  } else {
-    steps.push(
-      `The generator accepts this model now. Clearing the ${warnings} warning${
-        warnings === 1 ? "" : "s"
-      } is optional, but each one names something it accepts and quietly gets wrong.`
-    );
-  }
+  steps.push(
+    errors > 0
+      ? `Repeat until the last line reads OK. The generator refuses this model while any error stands.`
+      : `The generator accepts this model now. Clearing the ${warnings} warning${
+          warnings === 1 ? "" : "s"
+        } is optional, but each one names something it accepts and quietly gets wrong.`
+  );
 
   return ["next steps", ...steps.map((step, index) => `  ${index + 1}. ${wrap(step)}`)].join("\n");
 }
-
-/**
- * The warnings that leave the Application Dictionary saying less than the model
- * does — and which the authoring protocol's checklist and `audit-model.mjs`
- * both treat as mandatory rather than advisory.
- *
- * | code | what the dictionary records instead |
- * |---|---|
- * | `EML119` | a reference column as `String` — a uuid in a text box, not a lookup |
- * | `EML146` | a closed vocabulary as `String` — free text, not a dropdown |
- * | `EML151` | help that restates its own name — coverage without meaning |
- * | `EML152` | `sys_table.description` empty — the entity's manual section opens with nothing |
- * | `EML153` | `sys_column.description` empty — the field prints a dash in the form and the manual |
- * | `EML154` | a `%%category` the parser drops, so its entities fall into "General" |
- * | `EML170` | no `sys_field_group` at all — the form is one flat, unheaded list |
- * | `EML172` | a column no `%%section` row places — it lands in a trailing "Other" section |
- * | `EML177` | `sys_field_group.description` empty — a section heading with nothing under it |
- */
-const DICTIONARY_COMPLETENESS = new Set([
-  "EML119",
-  "EML146",
-  "EML151",
-  "EML152",
-  "EML153",
-  "EML154",
-  "EML170",
-  "EML172",
-  "EML177",
-]);
 
 /** Wrap a step to a readable measure, indented under its own number. */
 function wrap(text: string, width = 74): string {
@@ -311,29 +242,12 @@ export function formatReport(report: CheckReport): string {
     ...(infos > 0 ? [count(infos, "note")] : []),
   ].join(", ");
 
-  /*
-   * A passing run that still printed something says so on the same line, so the
-   * notes above it cannot be mistaken for the outcome.
-   *
-   * "Advisory" is true of most warnings and false of the dictionary ones, and
-   * this is the line §8.2 tells a reader to read — so saying it flatly here
-   * undid what `formatNextSteps` had just said two lines above. A model that
-   * clears the checker and skips these fails `audit-model.mjs`, which the
-   * authoring protocol requires to exit 0, so the verdict names them rather
-   * than waving at them.
-   */
-  const dictionaryGaps = report.issues.filter((issue) =>
-    DICTIONARY_COMPLETENESS.has(issue.code)
-  ).length;
-  const advisory = !report.ok
-    ? ""
-    : dictionaryGaps > 0
-      ? ` — the generator accepts this model, but ${dictionaryGaps} Application Dictionary gap${
-          dictionaryGaps === 1 ? "" : "s"
-        } above must still be cleared (audit-model.mjs fails while they stand)`
-      : report.issues.length > 0
-        ? " — notes and warnings are advisory; the generator accepts this model"
-        : "";
+  /* A passing run that still printed something says so on the same line, so the
+     notes above it cannot be mistaken for the outcome. */
+  const advisory =
+    report.ok && report.issues.length > 0
+      ? " — notes and warnings are advisory; the generator accepts this model"
+      : "";
   const verdict = report.ok
     ? `OK — ${counted} (EML ${report.languageVersion})${advisory}`
     : `FAILED — ${counted} (EML ${report.languageVersion})`;
