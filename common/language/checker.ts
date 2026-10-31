@@ -25,6 +25,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { EmlAttribute, EmlEntity, EmlModel, EmlRule, EmlWorkflow } from "./cli/src/model";
+import { stateToken } from "./composer";
 import { parseEml } from "./cli/src/parser";
 import { caps } from "./cli/src/util";
 import { loadLanguageDefinition, stepNodeTypes } from "./index";
@@ -2313,6 +2314,92 @@ class CheckEngine {
           hint: `Declare "${entityName}" in the erDiagram section.`,
         });
       }
+
+      this.checkWorkflowStatus(text.trim(), lineNo, name, entityName, kind);
+    }
+  }
+
+  /**
+   * EML243-EML245: `status: <state>` binds a hook or saga workflow to a move.
+   * It runs in the second transaction of the button press that moves the record
+   * into that state, so the state has to exist, the workflow has to be one an
+   * update can start, and some arrow has to lead into it.
+   */
+  private checkWorkflowStatus(
+    text: string,
+    lineNo: number,
+    name: string,
+    entityName: string,
+    kind: string
+  ): void {
+    const raw = text.match(/\bstatus:\s*(\S+)/)?.[1];
+    if (raw === undefined) return;
+    const status = stateToken(raw);
+
+    const machines = this.model.workflows.filter(
+      (wf) => wf.entity === entityName && wf.kind === "state"
+    );
+    const edges = machines.flatMap((wf) => wf.transitions);
+    const states = new Set(
+      edges.flatMap((t) => [t.from, t.to]).filter((state) => state !== "[*]")
+    );
+    const known = [...states].map((state) => [stateToken(state), state] as const);
+
+    // EML243: the state must be one the entity's status machine draws.
+    if (machines.length === 0 || !known.some(([token]) => token === status)) {
+      this.error(
+        "EML243",
+        machines.length === 0
+          ? `%%workflow "${name}" is bound to status "${raw}", but ${entityName} has no status machine.`
+          : `%%workflow "${name}" is bound to status "${raw}", which ${entityName}'s status machine does not draw.`,
+        {
+          line: lineNo,
+          hint:
+            machines.length === 0
+              ? `An entity with no status machine has Draft and Final only, and its workflows already run on the way to Final. Remove "status:", or draw a kind: state workflow for ${entityName}.`
+              : `States drawn: ${known.map(([, state]) => state).join(", ")}.`,
+          context: text,
+        }
+      );
+      return;
+    }
+
+    // EML244: only a workflow an update starts can be bound to a move.
+    const updateStarted =
+      kind === "hook"
+        ? this.model.workflows
+            .filter((wf) => wf.name === name && wf.kind === "hook")
+            .every((wf) => wf.hooks.every((hook) => /update/i.test(hook.type)))
+        : kind === "saga" &&
+          /\boperation:\s*UPDATE\b/i.test(text) &&
+          !/\btrigger:\s*rule\b/.test(text);
+    if (!updateStarted) {
+      this.error(
+        "EML244",
+        `%%workflow "${name}" is bound to status "${raw}" but is not started by an update.`,
+        {
+          line: lineNo,
+          hint:
+            kind === "saga"
+              ? "A status-bound saga needs  trigger: automatic operation: UPDATE  — a move is an update."
+              : "A status-bound hook workflow may carry beforeUpdate and afterUpdate hooks only.",
+          context: text,
+        }
+      );
+    }
+
+    // EML245: a state nothing leads into is a move that is never made.
+    const entered = edges.some((t) => t.from !== "[*]" && stateToken(t.to) === status);
+    if (!entered) {
+      this.warn(
+        "EML245",
+        `%%workflow "${name}" is bound to status "${raw}", which no button moves a record into.`,
+        {
+          line: lineNo,
+          hint: `Only an arrow  <state> --> ${raw}  makes a move; the first state is entered by creating the record.`,
+          context: text,
+        }
+      );
     }
   }
 

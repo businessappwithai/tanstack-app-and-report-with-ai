@@ -68,6 +68,7 @@ erDiagram
     }
 
 %%entity Customer help: A person or organisation that buys from us. Created when a lead converts, and never deleted while an unpaid invoice stands against it.
+%%entity Customer icon: UserRound
 %%field Customer.email help: The address invoices and order confirmations are sent to, and the customer's identity here. Unique, because two records on one address split a customer's history in two.
 %%field Customer.name help: The trading name to address on correspondence and to print on an invoice. Not necessarily the registered legal entity.
 %%section entity: Customer; name: Customer; help: Who is buying, under the name and address every invoice carries.; rows: name, email
@@ -112,15 +113,18 @@ erDiagram
 %%index DanceClass(instructor_id, starts_at)
 
 %%entity Instructor help: Somebody who teaches at the studio. Instructors are booked against classes, so deactivating one has to leave their past classes attributed rather than delete them.
+%%entity Instructor icon: GraduationCap
 %%field Instructor.full_name help: The name that appears on the timetable, which is how members choose a class. Use the name the studio advertises, not the one on the contract.
 %%field Instructor.email help: Where the schedule and cancellation notices are sent, and how the instructor signs in. Unique, because it identifies the person.
 %%field Instructor.is_active help: Whether the instructor is currently teaching. Cleared instead of deleting, so the timetable history and the members' attendance records stay intact.
 
 %%entity Room help: A physical studio a class can be held in. Rooms are the constraint the timetable is built against: two classes cannot share one, and capacity is what caps a class's bookings.
+%%entity Room icon: DoorOpen
 %%field Room.name help: What the room is called on the timetable and on the door. Members navigate by it, so keep it the name actually painted on the wall.
 %%field Room.capacity help: The most people the room legally holds, including the instructor. It is the ceiling on a class's own capacity, and it is a fire regulation rather than a preference.
 
 %%entity DanceClass help: One session at one time in one room with one instructor. The class is what a member books onto and what the studio is paid for, and its status is the single answer to whether it is going ahead.
+%%entity DanceClass icon: Music
 %%field DanceClass.instructor_id help: Who is teaching this session. Changing it is a substitution, and members who booked for a named instructor generally want to be told.
 %%field DanceClass.room_id help: Where the session is held. It caps the class's capacity and is what a member is looking for when they arrive.
 %%field DanceClass.title help: What the class is called on the timetable — the style and level a member is choosing between. "Beginners' salsa", not "Class 14".
@@ -391,6 +395,7 @@ appears on the dashboard, and a child does not.
 %%field Lead.status enum: LeadStatus
 %%field Lead.score help: 0-100, set by the scoring rule. Anything over 70 routes to a salesperson.
 %%entity Lead help: Someone who has shown interest but is not yet an account.
+%%entity Lead icon: UserPlus
 %%index Lead(campaign_id, status)
 %%index Contact(email) unique
 %%category name: Sales; description: Leads and the deals they become; icon: TrendingUp; color: #0ea5e9; entities: Lead, Opportunity
@@ -414,7 +419,7 @@ appears on the dashboard, and a child does not.
 This is the most-skipped part of a model and the most expensive to skip. The
 generated application has no other source of explanation: no tooltips written by
 hand, no README beside the form, no designer to ask. What you write here is what
-a user reads under the control, what the Application Dictionary shows beside the
+a user reads behind a field's `?`, what the Application Dictionary shows beside the
 column, and the whole of the manual the generator ships. Leave it out and the
 application still runs — which is exactly why it gets left out — but every field
 on every form is a label with nothing behind it.
@@ -535,6 +540,7 @@ erDiagram
     }
 
 %%entity Lead help: A company that has shown interest but has not yet been qualified by a salesperson. A lead becomes an account only on conversion, so nothing is sold against one.
+%%entity Lead icon: UserPlus
 %%field Lead.company_name help: The organisation as it identified itself. It is what a salesperson searches by before creating a duplicate.
 %%field Lead.email help: The address the enquiry arrived from and where the first outreach goes. Unique, so two enquiries from one contact do not become two leads.
 %%field Lead.employee_count help: How big the company is, as stated or as researched. It is the only firmographic input to the scoring rule: a thousand or more adds 35 points, anything less adds 10.
@@ -636,6 +642,7 @@ erDiagram
     }
 
 %%entity Account help: A company the business actually sells to. Accounts are created on conversion from a lead and are never deleted while open business stands against them — the beforeDelete hook below is what enforces that.
+%%entity Account icon: Building2
 %%field Account.name help: The trading name to use on correspondence and invoices. Normalised on creation by the beforeCreate hook, so two spellings of one company do not become two accounts.
 %%field Account.account_number help: The finance system's own reference for this customer. Optional until finance issues one, unique once it exists, and checked by the customValidate hook rather than only by the database.
 %%section entity: Account; name: Account; help: The customer organisation and the number it is known by.; rows: name, account_number
@@ -733,6 +740,7 @@ erDiagram
 %%field Booking.status enum: BookingStatus
 
 %%entity Booking help: One member's place on one session, from the moment they ask for it to the moment they turn up or do not. The booking is what the studio counts capacity against, so a cancelled one frees a place and a no-show does not.
+%%entity Booking icon: Ticket
 %%field Booking.member_name help: The member the place is held for, as reception would call them.
 %%field Booking.status help: Where the booking is: requested, confirmed, attended, cancelled or no_show. It moves only by the booking's action buttons; nobody types it.
 %%field Booking.requested_at help: When the booking reached requested. Stamped by the application when the move is made.
@@ -836,13 +844,23 @@ it was, with the reason. `GET /api/bus/<entity>?awaiting=me` lists the records
 waiting for the caller.
 
 The word after the colon is the **transition event**. It names the move in the
-diagram, the viewers, the generated manual and the button ("Close won"); an edge
-with no label is the button "Move to <state>".
+diagram, the viewers, the generated manual and `%%rbac`. The button is named
+after the status it moves to ("Closed won"), labelled or not.
 
 ### 5.3 `kind: saga` — a multi-step process
 
 A saga writes across entities. Each `%%step` binds a flowchart node to an
 executable step, and **the flowchart's edges give the running order**.
+
+A saga (or a `kind: hook` workflow) may be bound to a move of the entity's status
+machine with `status: <state>` — `%%workflow Review entity: Contract kind: saga
+trigger: automatic operation: UPDATE status: to_be_reviewed`. A button press is
+two transactions: the first saves the form and leaves the status where it is, the
+second runs the workflows bound to the target state and moves the record only if
+every one succeeds; a failure rolls the second back, keeps the saved values and
+records the reason. `EML243` (the state must be drawn), `EML244` (an update must
+start it), `EML245` (some arrow must lead into it). An entity with no status
+machine has Draft and Final only and takes no `status:`.
 
 ```mermaid
 %%meta name: Lead Conversion
@@ -881,6 +899,7 @@ erDiagram
 %%field Lead.status enum: LeadStatus
 
 %%entity Lead help: A company that has shown interest and is not yet a customer. Qualifying one is what starts the conversion saga below, which opens the account and its first contact.
+%%entity Lead icon: UserPlus
 %%field Lead.company_name help: The organisation as it identified itself. It becomes the account's name on conversion, so a sloppy one propagates.
 %%field Lead.email help: The address the enquiry arrived from. It becomes the primary contact's address on conversion, which is why it is unique here.
 %%field Lead.status help: new — not yet picked up; working — being pursued; qualified — accepted by sales, and the value that fires the conversion saga; converted — an account exists; disqualified — not a fit, and kept so the same enquiry is not worked twice.
@@ -888,15 +907,18 @@ erDiagram
 %%field Lead.owner_id help: The salesperson pursuing it. They inherit the account on conversion, which is why it is set before qualification rather than after.
 
 %%entity Account help: A company the business sells to, opened by the conversion saga when a lead is qualified. It is the record everything commercial hangs off, and it outlives the lead that produced it.
+%%entity Account icon: Building2
 %%field Account.name help: The trading name on correspondence and invoices, copied from the lead's company name at conversion and correctable afterwards.
 %%field Account.tier help: strategic or smb, decided by the conversion saga from the lead's score. It sets the service level the account is entitled to, so changing it by hand is a commercial decision.
 %%field Account.owner_id help: The salesperson responsible. Inherited from the lead, and reassigned when the territory changes.
 
 %%entity Contact help: A person at an account. The conversion saga creates the first one from the lead's own email address, and the rest are added as the relationship widens.
+%%entity Contact icon: Contact
 %%field Contact.account_id help: The company this person works for. It is what a deal or a case is filed under, so a contact on the wrong account misfiles everything about them.
 %%field Contact.email help: How this person is reached, and their identity here. Unique across contacts, because the same address at two accounts is one person who has moved.
 
 %%entity User help: Somebody at this business who owns leads and accounts. Users are the assignable side of the pipeline: an unowned lead is one nobody is working.
+%%entity User icon: UserCog
 %%field User.full_name help: The salesperson's name as it appears on a lead's owner field and in an account's history.
 %%section entity: Lead; name: Lead; help: The company that showed interest, who is working it, and how far it has got.; rows: company_name, email | status, score | owner_id
 %%section entity: Account; name: Account; help: The customer organisation, its tier, and who owns the relationship.; rows: name, tier | owner_id

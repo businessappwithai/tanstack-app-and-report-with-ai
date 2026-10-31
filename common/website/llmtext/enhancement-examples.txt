@@ -88,16 +88,19 @@ erDiagram
 %%index Booking(dance_class_id, status)
 
 %%entity Instructor help: Somebody who teaches at the studio. Instructors are booked against classes, so one who leaves is deactivated rather than deleted: their past classes stay attributed and the attendance history stays readable.
+%%entity Instructor icon: GraduationCap
 %%field Instructor.full_name help: The name on the timetable, which is how members choose a class. Use the name the studio advertises rather than the one on the contract.
 %%field Instructor.email help: Where the schedule and any cancellation reach them, and how they sign in. Unique, because it identifies the person.
 %%field Instructor.phone help: A number reception can call on the morning of a class. Optional, and the reason a class is covered rather than cancelled when somebody is ill.
 %%field Instructor.is_active help: Whether they are currently teaching. Cleared instead of deleting; an inactive instructor should not appear when a new class is scheduled.
 
 %%entity Room help: A physical studio a class is held in. Rooms are the constraint the timetable is built against — two classes cannot share one at the same hour — and their capacity is the ceiling on every class booked into them.
+%%entity Room icon: DoorOpen
 %%field Room.name help: What the room is called on the timetable and on the door. Unique, because a member navigating the building relies on it being unambiguous.
 %%field Room.capacity help: The most people the room legally holds, instructor included. It is a fire regulation rather than a preference, and no class may be booked above it.
 
 %%entity Member help: Somebody who books classes. The membership record carries the tier that decides what they may book and the credit balance a trial member spends, so it exists before any booking does.
+%%entity Member icon: IdCard
 %%field Member.full_name help: The name reception greets them by and the name on the class register.
 %%field Member.email help: Where confirmations and cancellations are sent, and how the member signs in. Unique across members, so one person is one history.
 %%field Member.tier help: trial — pay-as-you-go from a credit balance; standard — a set number of classes a month; unlimited — no cap. The tier is what the admission rule reads before allowing a booking.
@@ -105,6 +108,7 @@ erDiagram
 %%field Member.credits help: Classes a trial member has left to spend. The admission rule refuses a trial member with none, which is the only thing standing between a free trial and an unlimited one.
 
 %%entity DanceClass help: One session at one time in one room with one instructor. The class is what a member books onto and what the studio is paid for; its booked count is maintained by the booking saga rather than typed, because two people booking at once must not both be told there was a seat.
+%%entity DanceClass icon: Music
 %%field DanceClass.instructor_id help: Who is teaching. Changing it is a substitution, and members who booked for a named instructor generally expect to be told.
 %%field DanceClass.room_id help: Where it is held. It caps the class's own capacity and is what a member is looking for when they arrive.
 %%field DanceClass.title help: The class as it appears on the timetable — the style and the level a member is choosing between. "Beginners' salsa", not "Class 14".
@@ -115,6 +119,7 @@ erDiagram
 %%field DanceClass.price help: What a member pays for this session if they are not drawing on a tier or a credit. Empty where the class is included in the membership.
 
 %%entity Booking help: One member's place on one session, from the moment they ask for it to the moment they turn up or do not. It is what capacity is counted against, so a cancellation frees a place and a no-show does not — which is the distinction the whole waiting list depends on.
+%%entity Booking icon: Ticket
 %%field Booking.member_id help: Who is booked. It is what the class register is built from and who a cancellation notice is sent to.
 %%field Booking.dance_class_id help: The session being booked. Its capacity and booked count are what the admission rule checks before the booking is accepted.
 %%field Booking.status help: requested — asked for, not yet accepted; confirmed — the place is held; attended — the member came; cancelled — the place is released; no_show — the place was held and wasted, which is what a repeat-offender policy is built on. Set only by the booking workflows, when reception records the time below that each move depends on; nobody changes it by hand.

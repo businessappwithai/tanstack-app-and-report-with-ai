@@ -4,34 +4,29 @@
   "version": "1.0.0",
   "description": "Two products and one modelling language. This manifest covers only the root-level language folder; each subfolder has its own.",
   "engines": {
-    "bun": ">=1.3.11"
+    "bun": ">=1.4.4"
   },
   "scripts": {
-    "check": "bun run check:models && bun run type-check && bun run lint && bun run check:language-tools && bun run check:stacks && bun run check:clis && bun run check:pack",
+    "check:all": "bun run check:models && bun run check:protocol && bun run type-check && bun run check:language-tools && bun run check:stacks && bun run check:clis && bun run check:pack",
     "check:models": "bun scripts/check-models.ts",
+    "check:protocol": "bun scripts/check-protocol.ts",
     "check:stacks": "bun scripts/check-stacks.ts",
-    "_comment:clis": "Two CLIs, two runtimes, and they are not interchangeable: `appwithai` is run on bun 1.4 (what app-with-ai-tanstack pins, and what the Dockerfiles it generates run on), `appwithai-wasm` on bun 1.3. `check:clis` runs both under whichever bun is on PATH, which is right for a local sanity run; CI splits them into two jobs so each gets its own \u2014 see .github/workflows/root-ci.yml.",
+    "_comment:clis": "Two CLIs, one runtime: `appwithai` and `appwithai-wasm` both run on bun 1.4.4, what app-with-ai-tanstack requires throughout. `check:clis` runs both under whichever bun is on PATH and prints which; CI runs each in a job of its own so they go side by side \u2014 see .github/workflows/root-ci.yml.",
     "check:clis": "bun scripts/check-clis.ts",
     "check:cli": "bun scripts/check-clis.ts --only appwithai",
     "check:cli:wasm": "bun scripts/check-clis.ts --only appwithai-wasm",
     "check:pack": "bun scripts/check-reporting-pack.ts",
-    "type-check": "tsc --project tsconfig.language.json",
-    "lint": "bun run lint:language && bun run lint:scripts",
-    "lint:fix": "bun run lint:language:fix && bun run lint:scripts:fix",
-    "_comment:lint": "language/biome.json is the config, and it is inside language/ rather than at the repository root because a root config makes both subfolders' own configs nested roots and Biome then refuses to run at all. Linting language/ means running from inside it; linting scripts/ means pointing --config-path at it from outside. Passing both at once makes Biome find that same file twice and fail.",
-    "lint:language": "cd language && biome check --diagnostic-level=error .",
-    "lint:language:fix": "cd language && biome check --write .",
-    "lint:scripts": "biome check --config-path language --diagnostic-level=error scripts build",
-    "lint:scripts:fix": "biome check --config-path language --write scripts build",
+    "_comment:type-check": "bun check is Bun's own type checker (1.4.3+; this project pins 1.4.4). No script here may be named `check`: Bun runs a package script of that name in preference to the built-in, so `bun check` would quietly run the whole chain instead of type-checking. The aggregate is `check:all` for that reason. An older Bun fails with \"Script not found\" rather than passing.",
+    "type-check": "bun check -p tsconfig.language.json",
     "_comment:language-tools": "html/checker.js and html/fixer.js are bundled from language/browser/*.entry.ts, and each one inlines language/appwithai-language.json. Editing the definition or the checker stales them, and nothing else notices — so `--check` runs in `check` and fails rather than serving a validator that disagrees with this repository's own language. website/viewers/eml-model.js is NOT built here: its entry lives in the app-with-ai-tanstack checkout and imports that repository's language copy, so it is carried across from there.",
     "build:language-tools": "bun scripts/build-language-tools.ts",
     "check:language-tools": "bun scripts/build-language-tools.ts --check",
+    "vendor:guide": "bun scripts/vendor-guide.ts",
     "pack": "bun build/reporting-pack.ts",
     "check:pack:ci": "bun scripts/check-reporting-pack.ts --require-server"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.6",
-    "@types/bun": "^1.0.0",
+    "@types/bun": "^1.4.4",
     "@types/node": "^22.10.2",
     "typescript": "^7.0.2"
   }
