@@ -366,7 +366,7 @@ Write one **dossier** per entity, already filled in, and (in *walk me through
 it*) walk them one at a time:
 
 ```
-# Lead · standalone · category: Sales · read by: sales_rep, sales_manager
+# Lead · standalone · icon: UserPlus · category: Sales · read by: sales_rep, sales_manager
 A person or company that has shown interest and has not yet been qualified …
 
 ## Fields
@@ -404,7 +404,9 @@ For every column decide, in the dossier and not later:
 - **its place on the form**: the `%%section` and the row, beside the column it
   is filled in with.
 
-And for every entity: its `%%entity … help:`, its `%%category` (with `name:`),
+And for every entity: its `%%entity … help:`, its `%%entity … icon:` — a lucide
+icon that depicts the thing itself, chosen so no two entities in a category look
+alike (§3.7) — its `%%category` (with `name:`),
 whether it is a line item (`parent:`), the column that will name it in every
 lookup (§3.7, display value), and its **form layout** — headed sections, two
 fields per row, every column but the key placed exactly once (§3.7, *Form

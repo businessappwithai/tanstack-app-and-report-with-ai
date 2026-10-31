@@ -109,12 +109,14 @@ export function normalizeEvent(event: string): string {
 }
 
 /**
- * What a button says. The edge's event, as words ("Close won"); an edge the
- * diagram did not label is named by where it goes ("Move to Closed won").
+ * What a button says: the status it moves the record to ("To be reviewed"). The
+ * edge's event stays the move's name for `%%rbac`, the history and the API, and
+ * is not part of the label — the person pressing it is choosing where the
+ * record goes, and the workflows bound to that status run behind it.
  */
-export function moveLabel(event: string | undefined, to: string): string {
-  const words = (text: string) => text.replace(/[_-]+/g, " ").trim();
-  const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
-  if (event && event.trim()) return sentence(words(event));
-  return `Move to ${sentence(words(to))}`;
+export function moveLabel(_event: string | undefined, to: string): string {
+  const words = to.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  // An id written in capitals (`QUALIFICATION`) reads as a word, not a shout.
+  const text = words === words.toUpperCase() ? words.toLowerCase() : words;
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

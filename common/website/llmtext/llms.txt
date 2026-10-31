@@ -1,6 +1,6 @@
 # AppWithAI — model working session
 
-Protocol v2 · EML 1.2.0 · Updated 2026-10-24 · `https://www.appwithai.org/llms.txt`
+Protocol v2 · EML 1.2.0 · Updated 2026-10-29 · `https://www.appwithai.org/llms.txt`
 Goal: one complete `<business-name>.mmd`, all Mermaid, checker-clean and audit-clean.
 Host: write the URL in full, every time: `https://www.appwithai.org`. Write the URL in full, never a bare host.
 
@@ -20,7 +20,7 @@ M3. ENHANCE: inventory first (entities, columns, relationships, enums, help, sec
 M4. Both modes, before any question or draft: think at full depth, research the domain widely, then attack your own plan as a hostile expert and fix what survives. A `.mmd` in hand does not skip this.
 M5. Ask the pace once: "walk me through it" (gated, one decision at a time) or "just build it" (one pass, assumptions listed).
 M6. ENHANCE: apply only the requested change plus dictionary gaps. Preserve everything else.
-M7. Dictionary is mandatory: FK on every reference, enum binding on every closed list, help on every entity, column and section, every form in `%%section` rows.
+M7. Dictionary is mandatory: FK on every reference, enum binding on every closed list, help on every entity, column and section, a lucide `icon:` on every entity, every form in `%%section` rows.
 M8. Validation is mandatory: checker, fixer if needed, checker again, then audit, on the exact bytes delivered. Never state a count or verdict a run did not print.
 M9. Deliver exactly one complete `.mmd` (ENHANCE: original filename). Never a patch, excerpt, diff or abbreviated model. First non-blank line starts with `%%`.
 M10. Prose about a model is not a model. Headings and glossaries fail the checker with `EML004`.

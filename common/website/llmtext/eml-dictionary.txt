@@ -33,7 +33,7 @@ right one. Nothing after authoring adds a value you left out.
 | its type, alias and modifiers | `sys_column.sys_reference_id` — **the control a person gets** (§3.7.2) |
 | `%%enum` + `%%field <E>.<c> enum:` | a `List` reference with one `sys_ref_list` row per value |
 | `%%entity <E> help:` | `sys_table.description` — and the opening of that entity's section of the generated manual |
-| `%%field <E>.<c> help:` | `sys_column.description` — the hint under the control, and the column's row in the manual |
+| `%%field <E>.<c> help:` | `sys_column.description` — what the field's `?` shows, and the column's row in the manual |
 | `%%section entity: <E>; name: …; help: …; rows: …` | one `sys_field_group` per section (heading, help, two columns) and each field's group, order, row, column and span (§3.7.6) |
 | `%%field <E>.<c> display: \| readonly: \| mandatory: <logic>` | `sys_field.display_logic`, and `read_only_logic` / `mandatory_logic` on both `sys_column` and `sys_field` — when the field shows, locks or is required (§3.7.9) |
 | `%%entity <Child> parent: <Parent>` | the child's tab inside the parent's window at level 1, linked on the child's foreign key (§3.5.1) |
@@ -163,8 +163,8 @@ else says what choosing one does.
 #### 3.7.5 Help — the only explanation the application has
 
 `sys_table.description`, `sys_column.description` and `sys_field_group.description`
-each have exactly one source — the `help:` you write — and they are the hint under
-every control, the sentence under every section heading, and the whole of the
+each have exactly one source — the `help:` you write — and they are what every
+field's `?` shows, the sentence under every section heading, and the whole of the
 generated manual's prose:
 
 ```
@@ -292,7 +292,14 @@ only report the help you wrote: where a column has none it prints a dash.
 The rest of the dictionary follows the same way: `%%index` becomes real indexes,
 and `%%category` (§3.6) becomes the dashboard grouping — a model that declares
 none gets a single "General" group holding everything. `%%entity … icon:` reaches
-`sys_table.icon`, which the entity's card, window heading and navigation draw. The
+`sys_table.icon`, which the entity's card, window heading and navigation draw —
+and it is **required on every entity**. Without it every card and every navigation
+entry draws the same generic table glyph, and a person scanning forty screens has
+nothing but the label to go on. Pick a lucide name that depicts the thing
+(`Ship` for a vessel, `FileText` for a document, `Receipt` for an invoice), give
+no two entities in one category the same one, and check each name at
+https://lucide.dev/icons — a name lucide does not have draws a placeholder and
+the checker does not catch it (eml-syntax.txt, *An `icon:` names a lucide icon*). The
 remaining `%%entity` keys — `label`, `prefix`, `softDelete`, `audited` — are
 validated but not yet compiled (§7).
 

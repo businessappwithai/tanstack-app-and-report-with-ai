@@ -78,6 +78,13 @@ export interface EmlWorkflowSection {
   trigger?: "automatic" | "rule";
   /** Saga only. Which write runs the workflow. Defaults to CREATE. */
   operation?: "CREATE" | "UPDATE" | "DELETE" | "ALL";
+  /**
+   * Hook and saga only. The state of the entity's status machine the workflow
+   * is bound to: it runs in the second transaction of the button press that
+   * moves the record into this state, and not on an ordinary save. Stored in
+   * the lowercase underscore spelling the machine's events use.
+   */
+  status?: string;
   title?: string;
   /** The diagram body, starting at `flowchart`/`graph`/`stateDiagram-v2`. */
   diagram: string;
@@ -172,10 +179,12 @@ export function emitWorkflowSection(workflow: EmlWorkflowSection): string {
     workflow.kind === "saga" && workflow.operation && workflow.operation !== "CREATE"
       ? ` operation: ${workflow.operation}`
       : "";
+  const status =
+    workflow.kind !== "state" && workflow.status ? ` status: ${workflow.status}` : "";
   return [
     `%%meta name: ${workflow.title ?? workflow.name}`,
     "%%meta kind: workflow",
-    `${WORKFLOW_LEAD}${workflow.name} entity: ${workflow.entity} kind: ${workflow.kind}${trigger}${operation}`,
+    `${WORKFLOW_LEAD}${workflow.name} entity: ${workflow.entity} kind: ${workflow.kind}${trigger}${operation}${status}`,
     ensureDiagram(workflow.diagram, keyword),
   ].join("\n");
 }
@@ -336,10 +345,12 @@ export function extractWorkflowSections(source: string): EmlWorkflowSection[] {
     const kind = match?.[3];
     const trigger = directive.match(/\btrigger:\s*(\S+)/)?.[1];
     const operation = directive.match(/\boperation:\s*(\S+)/)?.[1]?.toUpperCase();
+    const status = directive.match(/\bstatus:\s*(\S+)/)?.[1];
+    const resolvedKind = kind === "state" || kind === "saga" ? kind : "hook";
     return {
       name: match?.[1] ?? "workflow",
       entity: match?.[2] ?? "",
-      kind: kind === "state" || kind === "saga" ? kind : "hook",
+      kind: resolvedKind,
       trigger: trigger === "rule" ? "rule" : trigger === "automatic" ? "automatic" : undefined,
       operation:
         operation === "CREATE" ||
@@ -348,10 +359,16 @@ export function extractWorkflowSections(source: string): EmlWorkflowSection[] {
         operation === "ALL"
           ? operation
           : undefined,
+      status: status && resolvedKind !== "state" ? stateToken(status) : undefined,
       title,
       diagram: body,
     };
   });
+}
+
+/** `To Be Reviewed`, `to-be-reviewed` and `to_be_reviewed` name one state. */
+export function stateToken(name: string): string {
+  return name.trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
 
 interface RawSection {

@@ -330,6 +330,7 @@ mechanical faults the checker catches by reading, which a human eye slides past:
 | No `%%section` row places the state field — it is shown read-only in the form's header and always in the list grid | `EML178` |
 | A cross-entity step's `targetField` is a column of the target entity; a child reaching its parent uses `targetSource: <fk>` | `EML275` |
 | Every `kind: saga` marked `trigger: rule` is named by some `%%action` | `EML286` |
+| A `status:` on a hook or saga workflow names a state the entity's machine draws, is started by an update, and has an arrow leading into it | `EML243` `EML244` `EML245` |
 | Every `%%rule` is bound with `on <Entity> event: <hookType>` | `EML506` |
 | Every Update or Delete step on another entity says which row — `targetSource` or `targetField` | `EML265` |
 
@@ -806,6 +807,9 @@ the model matches the business — and for the reasoning behind the ones it can.
    exactly once, each section with `help:` saying what that part of the form is
    for, named for what the person is doing rather than the kind of column it
    holds (§3.7.6). Clear every `EML170`, `EML172` and `EML177`.
+   **And every entity carries `%%entity <E> icon:`** — a lucide name that depicts
+   it, distinct within its category (§3.7). The audit does not score this one and
+   the checker does not know lucide's catalogue, so check each name yourself.
 12. **Every line item is declared as one.** Go through the entities and ask of
    each: is this a thing in its own right, or part of another thing? Every
    invoice line, order line, prescription item and delivery line gets
