@@ -2080,6 +2080,10 @@ class CheckEngine {
   private checkReportDirectives(): void {
     const entityNames = new Set(this.model.entities.map((e) => e.name));
     const seen = new Map<string, number>();
+    // The platform upserts a query, report and chart by title, so two reports with one title collapse into
+    // one row and the reporting pack is refused. The name is the key and is checked below; the title is
+    // what a person reads, and it is what the platform keys on.
+    const byTitle = new Map<string, string>();
 
     // A malformed line — no sql:, no name, an unknown chart type — is reported
     // by the parser as EML290/EML291/EML296, with its line. Re-scanning the raw
@@ -2099,6 +2103,21 @@ class CheckEngine {
         });
       }
       seen.set(report.name, lineNo ?? 0);
+
+      const titleKey = report.title.trim().toLowerCase();
+      const sameTitle = byTitle.get(titleKey);
+      if (sameTitle !== undefined && sameTitle !== report.name) {
+        this.error(
+          "EML292",
+          `%%report "${report.name}" has the same title as "${sameTitle}" ("${report.title}").`,
+          {
+            line: lineNo,
+            hint: "The reporting platform keeps one report per title, so these would collapse into one. Retitle one of them.",
+          }
+        );
+      } else if (sameTitle === undefined) {
+        byTitle.set(titleKey, report.name);
+      }
 
       // EML293: the query must actually select something.
       if (!/^\s*(select|with)\b/i.test(report.sql)) {
@@ -2213,6 +2232,9 @@ class CheckEngine {
     const { roles } = this.rbacReaders();
     const reportNames = new Set(this.model.reports.map((r) => r.name));
     const seen = new Set<string>();
+    // The platform upserts a dashboard by its title, so two with one title collapse into one row and the
+    // reporting pack is refused. A name is a key and is checked below; the title is what a person reads.
+    const byTitle = new Map<string, string>();
 
     for (const dashboard of this.model.dashboards) {
       const lineNo = this.src.findLine(new RegExp(`%%dashboard\\s+${dashboard.name}\\b`));
@@ -2225,6 +2247,21 @@ class CheckEngine {
         });
       }
       seen.add(dashboard.name);
+
+      const titleKey = dashboard.title.trim().toLowerCase();
+      const sameTitle = byTitle.get(titleKey);
+      if (sameTitle !== undefined && sameTitle !== dashboard.name) {
+        this.error(
+          "EML297",
+          `%%dashboard "${dashboard.name}" has the same title as "${sameTitle}" ("${dashboard.title}").`,
+          {
+            ...at,
+            hint: "The reporting platform keeps one dashboard per title, so these would collapse into one. Retitle one of them.",
+          }
+        );
+      } else if (sameTitle === undefined) {
+        byTitle.set(titleKey, dashboard.name);
+      }
 
       if (dashboard.reports.length === 0) {
         this.error("EML297", `%%dashboard "${dashboard.name}" names no reports.`, {

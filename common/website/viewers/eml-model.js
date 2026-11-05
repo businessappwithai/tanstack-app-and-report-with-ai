@@ -1520,7 +1520,7 @@ var appwithai_language_default = {
           readOnly: "A report may only read, and this is refused three times: by the checker at authoring time (EML293), by the compiler before the query can reach a seed file or model.json, and by each runtime before it executes - because sys_report is an ordinary table and model.json an ordinary file, so neither reader trusts what it is handed. A single trailing semicolon is allowed; a second statement behind it is not. Anything that writes belongs in a rule or a hook.",
           foreignKeysAreUuid: "A foreign key and a primary key are both UUID, in both stacks, so a join is written plainly: ON c.account_id = p.id. Do not cast. `::text` was needed while the browser stack typed a foreign key as VARCHAR; it does not any more, and PostgreSQL has no implicit cast back, so a cast that is no longer needed is now the thing that breaks the query.",
           chartNeedsAxes: "`chart:` without both `x:` and `y:` is an error (EML294) rather than a silent fall back to a table: a chart that cannot say what it plots renders empty, which reads as no data rather than as a missing declaration.",
-          namesAreKeys: "The name is the pack key, so a duplicate silently replaces the earlier report. Declared twice is an error (EML292).",
+          namesAreKeys: "The name is the pack key, so a duplicate silently replaces the earlier report. Declared twice is an error (EML292). The title is what the platform upserts a query, report and chart by, so two reports with one title collapse into one row and the pack is refused: that is an error too (EML292).",
           againstWhichSchema: "The query runs against the *generated application's* database, so it names `bus_` tables. It is not checked against a live schema at author time - the checker has no database - but `check-reporting-pack.ts in the orchestrator` executes every query in the pack against a real generated schema in CI.",
           whereItIsCompiled: "Compiled twice, by two readers, and neither replaces the other. Here, packages/generator/src/reports/index.ts puts each report into the generated application itself: a sys_report row served at /sys/reports and shown under Admin > Analysis in the NestJS stack, and a model.json entry served at /api/reports and shown under Reports in the browser application. Separately, businessappwithai/app-and-report-with-ai-tanstack compiles the same directive with common/build/reporting-pack.ts into a saved query, a report definition and, where chart: is set, a chart, seeded into the Enterprise Reporting platform ahead of the derived baseline. The real platform runs beside a deployed application, under the orchestrator's docker-compose or as the report service of the deployable archive's own compose file, and the browser application previews the same pack; see generatorContract.reportingApplication."
         }
@@ -1541,7 +1541,7 @@ var appwithai_language_default = {
         notes: {
           roleIsRequired: "role: must name a role some %%rbac line declares; a dashboard with no role, or an unknown one, is an error (EML297). A dashboard that no role owns is nobody's.",
           reportsMustExist: "Every name in reports: must be a %%report in the model (EML297). A dashboard may list a report another role also runs, but it should list reports its own role can run: every table the report names must be on that role's read list, or the tile answers 403.",
-          namesAreKeys: "The name is the pack key and the platform's dashboard name; declared twice is an error (EML297).",
+          namesAreKeys: "The name is the pack key; declared twice is an error (EML297). The title is what the platform upserts by, so two dashboards with one title would collapse into one row and the pack is refused: that is an error too (EML297).",
           coverageMinimums: "Reporting is mandatory and covers the whole domain. Every declared %%rbac role needs at least 50 charted %%report directives it can run - one charted report is a report and a chart - and at least 10 dashboards of its own, each listing at least 3 reports so that ten one-report dashboards cannot stand in for ten. The checker warns below either minimum (EML298 for reports, EML299 for dashboards) and audit-model.mjs fails while a warning stands. A role is counted over the %%report directives whose every bus_ table it may read: %%rbac read (or *) lines decide, an entity with no read line is open to every role, and a role called administrator reads everything and, inheriting every other role's reports and dashboards, owes no minimum of its own.",
           whereItIsCompiled: "Compiled once, by buildReportingPack, into one reporting dashboard per %%dashboard beside the derived overview. Both the real platform (seeded from the pack) and the browser application's preview (model.json) read that pack."
         }
@@ -4179,6 +4179,7 @@ class CheckEngine {
   checkReportDirectives() {
     const entityNames = new Set(this.model.entities.map((e) => e.name));
     const seen = new Map;
+    const byTitle = new Map;
     for (const report of this.model.reports) {
       const lineNo = this.src.findLine(new RegExp(`%%report\\s+${report.name}\\b`));
       const previous = seen.get(report.name);
@@ -4189,6 +4190,16 @@ class CheckEngine {
         });
       }
       seen.set(report.name, lineNo ?? 0);
+      const titleKey = report.title.trim().toLowerCase();
+      const sameTitle = byTitle.get(titleKey);
+      if (sameTitle !== undefined && sameTitle !== report.name) {
+        this.error("EML292", `%%report "${report.name}" has the same title as "${sameTitle}" ("${report.title}").`, {
+          line: lineNo,
+          hint: "The reporting platform keeps one report per title, so these would collapse into one. Retitle one of them."
+        });
+      } else if (sameTitle === undefined) {
+        byTitle.set(titleKey, report.name);
+      }
       if (!/^\s*(select|with)\b/i.test(report.sql)) {
         this.error("EML293", `%%report "${report.name}" does not begin with SELECT or WITH.`, {
           line: lineNo,
@@ -4252,6 +4263,7 @@ class CheckEngine {
     const { roles } = this.rbacReaders();
     const reportNames = new Set(this.model.reports.map((r) => r.name));
     const seen = new Set;
+    const byTitle = new Map;
     for (const dashboard of this.model.dashboards) {
       const lineNo = this.src.findLine(new RegExp(`%%dashboard\\s+${dashboard.name}\\b`));
       const at = lineNo === undefined ? {} : { line: lineNo };
@@ -4262,6 +4274,16 @@ class CheckEngine {
         });
       }
       seen.add(dashboard.name);
+      const titleKey = dashboard.title.trim().toLowerCase();
+      const sameTitle = byTitle.get(titleKey);
+      if (sameTitle !== undefined && sameTitle !== dashboard.name) {
+        this.error("EML297", `%%dashboard "${dashboard.name}" has the same title as "${sameTitle}" ("${dashboard.title}").`, {
+          ...at,
+          hint: "The reporting platform keeps one dashboard per title, so these would collapse into one. Retitle one of them."
+        });
+      } else if (sameTitle === undefined) {
+        byTitle.set(titleKey, dashboard.name);
+      }
       if (dashboard.reports.length === 0) {
         this.error("EML297", `%%dashboard "${dashboard.name}" names no reports.`, {
           ...at,
