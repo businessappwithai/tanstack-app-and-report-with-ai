@@ -173,7 +173,7 @@ reports on each (the floor is 3). A report may appear on more than one dashboard
 
 - `role:` must be a role some `%%rbac` line declares, and every name in
   `reports:` must be a `%%report` in the file. Either wrong is an error
-  (`EML297`), as is a dashboard with no role, no reports, or a name already used.
+  (`EML297`), as is a dashboard with no role, no reports, or a name or title already used.
 - List only reports that role can run (§7.2.2): a tile whose report reads a table
   the role may not read answers 403.
 - A charted report is drawn as a chart tile, half a row wide; an uncharted one as
@@ -187,7 +187,8 @@ reports on each (the floor is 3). A report may appear on more than one dashboard
   role as a prefix when only that role asks it (`sales-manager-open-pipeline`)
   and the subject as a prefix when several roles share it (`sessions-by-weekday`).
   The name is the key a report is stored under (`EML292`), so it must be unique
-  across the whole file.
+  across the whole file, and so must the title, because the platform keeps one
+  report per title (also `EML292`).
 - Every charted report names both axes, and both must be columns in its
   `SELECT` list (alias them): `chart: bar x: stage y: total`. Use `line` or
   `area` for time, `pie` only up to six slices, `bar` otherwise.

@@ -1172,8 +1172,8 @@ query runs against the generated application's own database — so it names
 every number it reports.
 
 The checker holds it to its shape and no further: a query must exist
-(`EML290`) and be named (`EML291`), the name must be unique because it is the
-key a report is stored under (`EML292`), the query must begin `SELECT` or
+(`EML290`) and be named (`EML291`), the name and the title must each be unique, because the name is the
+key a report is stored under and the platform keeps one report per title (`EML292`), the query must begin `SELECT` or
 `WITH` rather than write (`EML293`), a `chart:` must name both `x:` and `y:`
 (`EML294`), an `entity:` must be one the model declares (`EML295`), and a chart
 type must be one of `bar`, `line`, `pie`, `area` (`EML296`). It cannot tell you
@@ -1183,7 +1183,7 @@ a column name is wrong — it has no database.
 role it is for and the `%%report` directives it shows, in order; the reporting
 pack carries it beside the derived overview (§7.1, §7.2.4). The checker holds it
 to its shape (`EML297`: a name, a role some `%%rbac` line declares, at least one
-report that exists, a name used once) and holds every declared role to the
+report that exists, a name and a title each used once) and holds every declared role to the
 minimums of §7.2 — at least 50 charted `%%report` directives it can run
 (`EML298`) and at least 10 dashboards of at least 3 reports each (`EML299`).
 
