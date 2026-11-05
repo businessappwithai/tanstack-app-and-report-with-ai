@@ -218,6 +218,29 @@ export interface EmlReport {
   sql: string;
 }
 
+/**
+ * `%%dashboard` — a named collection of a role's own reports, written into the
+ * model beside the reports it shows.
+ *
+ * The reporting pack derives one overview dashboard from structure. That cannot
+ * say which questions belong together for the person who asks them: a sales
+ * manager's weekly pipeline review, a dispatcher's morning board. This directive
+ * is where an author groups a role's `%%report` directives into a dashboard,
+ * and `role:` is what makes it that role's.
+ */
+export interface EmlDashboard {
+  /** Stable identifier, used as the pack key. */
+  name: string;
+  /** What the dashboard is called on screen. */
+  title: string;
+  /** The declared `%%rbac` role this dashboard is for. */
+  role?: string;
+  /** The `%%report` names it shows, in order. */
+  reports: string[];
+  /** Who opens this dashboard and what they decide from it. */
+  help?: string;
+}
+
 export interface EmlModel {
   meta: EmlMeta;
   entities: EmlEntity[];
@@ -226,6 +249,7 @@ export interface EmlModel {
   indexes: EmlIndex[];
   rules: EmlRule[];
   reports: EmlReport[];
+  dashboards: EmlDashboard[];
   workflows: EmlWorkflow[];
   hooks: EmlHook[];
   guards: EmlGuard[];
@@ -242,6 +266,7 @@ export function emptyModel(): EmlModel {
     indexes: [],
     rules: [],
     reports: [],
+    dashboards: [],
     workflows: [],
     hooks: [],
     guards: [],

@@ -1,6 +1,6 @@
 # AppWithAI — the Application Dictionary (mandatory) (chunk `eml-dictionary.txt` of https://www.appwithai.org/llms.txt)
 
-> Chunk map (each is `https://www.appwithai.org/<name>`): llms.txt controller · working-session.txt §1.0, §1.1, §1.4 · checker-rules.txt §1.2, §1.3, §8, §10 · eml-syntax.txt §0, §2–§7 · eml-dictionary.txt §3.7 · eml-reporting.txt §7.1 · enhancement-examples.txt §9
+> Chunk map (each is `https://www.appwithai.org/<name>`): llms.txt controller · working-session.txt §1.0, §1.1, §1.4 · checker-rules.txt §1.2, §1.3, §8, §10 · eml-syntax.txt §0, §2–§7 · eml-dictionary.txt §3.7 · eml-reporting.txt §7.1, §7.2 · enhancement-examples.txt §9
 
 - **The Application Dictionary is mandatory, all of it** (§3.7): a lookup for
   every reference, a dropdown for every closed vocabulary, help on every entity,

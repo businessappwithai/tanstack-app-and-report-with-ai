@@ -1528,6 +1528,27 @@ var appwithai_language_default = {
           foreignKeysAreUuid: "A foreign key and a primary key are both UUID, in both stacks, so a join is written plainly: ON c.account_id = p.id. Do not cast. `::text` was needed while the browser stack typed a foreign key as VARCHAR; it does not any more, and PostgreSQL has no implicit cast back, so a cast that is no longer needed is now the thing that breaks the query.",
           whereItIsCompiled: "Compiled twice, by two readers, and neither replaces the other. Here, packages/generator/src/reports/index.ts puts each report into the generated application itself: a sys_report row served at /sys/reports and shown under Admin > Analysis in the NestJS stack, and a model.json entry served at /api/reports and shown under Reports in the browser application. Separately, businessappwithai/app-and-report-with-ai-tanstack compiles the same directive with common/build/reporting-pack.ts into a saved query, a report definition and, where chart: is set, a chart, seeded into the Enterprise Reporting platform ahead of the derived baseline. The real platform runs beside a deployed application, under the orchestrator's docker-compose or as the report service of the deployable archive's own compose file, and the browser application previews the same pack; see generatorContract.reportingApplication."
         }
+      },
+      {
+        keyword: "%%dashboard",
+        form: "%%dashboard <name> title: <Title> role: <role> reports: <report-name>, <report-name>, ... [help: <who opens it and what they decide>]",
+        status: "compiled",
+        consumedBy: [
+          "packages/generator/src/reports/index.ts -> compileDashboards -> reporting pack dashboards",
+          "language/cli/src/parser.ts -> model.dashboards",
+          "language/checker.ts (shape: EML297; per-role minimums: EML298, EML299)"
+        ],
+        purpose: "Group a role's own %%report directives into a named dashboard. The reporting pack derives one overview dashboard from structure; that cannot say which questions belong together for the person who asks them. A dashboard belongs to the declared %%rbac role named by role:, shows the %%report directives named by reports: in that order (a charted report as a chart tile, an uncharted one as a table tile), and is served by the reporting platform and its browser preview beside the overview.",
+        examples: [
+          "%%dashboard sales-manager-pipeline-review title: Pipeline review role: sales_manager reports: sales-manager-pipeline-by-stage, sales-manager-pipeline-by-owner, sales-manager-slipped-deals help: The Monday forecast meeting."
+        ],
+        notes: {
+          roleIsRequired: "role: must name a role some %%rbac line declares; a dashboard with no role, or an unknown one, is an error (EML297). A dashboard that no role owns is nobody's.",
+          reportsMustExist: "Every name in reports: must be a %%report in the model (EML297). A dashboard may list a report another role also runs, but it should list reports its own role can run: every table the report names must be on that role's read list, or the tile answers 403.",
+          namesAreKeys: "The name is the pack key and the platform's dashboard name; declared twice is an error (EML297).",
+          coverageMinimums: "Reporting is mandatory and covers the whole domain. Every declared %%rbac role needs at least 50 charted %%report directives it can run - one charted report is a report and a chart - and at least 10 dashboards of its own, each listing at least 3 reports so that ten one-report dashboards cannot stand in for ten. The checker warns below either minimum (EML298 for reports, EML299 for dashboards) and audit-model.mjs fails while a warning stands. A role is counted over the %%report directives whose every bus_ table it may read: %%rbac read (or *) lines decide, an entity with no read line is open to every role, and a role called administrator reads everything and, inheriting every other role's reports and dashboards, owes no minimum of its own.",
+          whereItIsCompiled: "Compiled once, by buildReportingPack, into one reporting dashboard per %%dashboard beside the derived overview. Both the real platform (seeded from the pack) and the browser application's preview (model.json) read that pack."
+        }
       }
     ],
     statusVocabulary: {
@@ -1608,7 +1629,7 @@ var appwithai_language_default = {
         queries: "Saved SQL over the application's bus_ tables, each carrying the tables it reads.",
         reports: "Report definitions over those queries.",
         charts: "Chart definitions (bar, line, pie, area) over those queries.",
-        dashboards: "One overview dashboard: up to four authored charts first, then one tile for each of the six most central entities.",
+        dashboards: "The overview dashboard - up to four authored charts first, then one tile for each of the six most central entities - plus one dashboard per %%dashboard, each carrying the role it is for.",
         access: "One reporting role per declared %%rbac role, plus the administrator, each with the bus_ tables it may read."
       },
       derivedFrom: [
@@ -1641,6 +1662,10 @@ var appwithai_language_default = {
           yields: "the author's own query, report and (with chart:) chart, listed first and placed at the top of the dashboard; a derived item with the same name is dropped in its favour"
         },
         {
+          declares: "%%dashboard",
+          yields: "a dashboard of the named role's own reports, one tile per report in the order listed, beside the overview"
+        },
+        {
           declares: "%%rbac ... .read",
           yields: "the tables each reporting role may read"
         },
@@ -1667,7 +1692,7 @@ var appwithai_language_default = {
         }
       ],
       signIn: "Two applications, two sign-ins, never merged. The application's account for a role is <role>@<app>.example.com and the reporting account is <role>@<app>.reports.example.com; the administrator is admin@admin.com on both sides, as two different accounts in two different user tables. Neither password works on the other side. A role in the application decides what a user may do to a record; a reporting role decides which tables their queries may read. Only read rules narrow a reporting role.",
-      verification: "The checker holds %%report to its shape (EML290-EML296) and cannot see whether a column exists. common/scripts/check-reporting-pack.ts in app-and-report-with-ai-tanstack runs every derived and authored query against a schema the generator actually emitted."
+      verification: "The checker holds %%report to its shape (EML290-EML296), %%dashboard to its shape (EML297) and every declared role to the reporting minimums (EML298, EML299), and cannot see whether a column exists. common/scripts/check-reporting-pack.ts in app-and-report-with-ai-tanstack runs every derived and authored query against a schema the generator actually emitted."
     },
     pipeline: [
       "1. ERD section -> MermaidParser -> Entity[] + Relationship[] -> migrations, DTOs, services, controllers, forms, tables. The same pass reads %%index into entity.indexes and %%enum / %%field enum: into bound enums.",
@@ -1793,6 +1818,7 @@ function emptyModel() {
     indexes: [],
     rules: [],
     reports: [],
+    dashboards: [],
     workflows: [],
     hooks: [],
     guards: [],
@@ -2009,6 +2035,40 @@ function parseDirective(line, n, model) {
         y: read("y"),
         help: read("help"),
         sql: sql.trim()
+      });
+      return;
+    }
+    case "dashboard": {
+      const nameMatch = rest.match(/^([A-Za-z_][\w-]*)\s*/);
+      if (!nameMatch) {
+        model.diagnostics.push({
+          severity: "error",
+          code: "EML297",
+          message: `%%dashboard has no name: "${line}"`,
+          line: n
+        });
+        return;
+      }
+      const [name] = caps(nameMatch, 1);
+      const keys = rest.slice(nameMatch[0].length);
+      const marks = [...keys.matchAll(/(?:^|\s)(title|role|reports|help):/g)];
+      const values = {};
+      marks.forEach((mark, i) => {
+        const key = mark[1];
+        if (key in values)
+          return;
+        const from = (mark.index ?? 0) + mark[0].length;
+        const value = keys.slice(from, marks[i + 1]?.index ?? keys.length).trim();
+        if (value)
+          values[key] = value;
+      });
+      const read = (key) => values[key];
+      model.dashboards.push({
+        name,
+        title: read("title") ?? name.replace(/[_-]+/g, " "),
+        role: read("role"),
+        reports: (read("reports") ?? "").split(",").map((r) => r.trim()).filter(Boolean),
+        help: read("help")
       });
       return;
     }
@@ -2886,6 +2946,9 @@ function escapeRe(literal) {
 function isForeignKeyColumnName(columnName) {
   return columnName.endsWith("_id") || columnName.endsWith("_by");
 }
+var REPORTS_PER_ROLE = 50;
+var DASHBOARDS_PER_ROLE = 10;
+var DASHBOARD_MIN_REPORTS = 3;
 
 class CheckEngine {
   model;
@@ -2971,6 +3034,8 @@ class CheckEngine {
     this.checkStepDirectives();
     this.checkActionDirectives();
     this.checkReportDirectives();
+    this.checkDashboardDirectives();
+    this.checkReportingCoverage();
     this.checkRuleDirectives();
     this.checkRules();
     this.checkWorkflows();
@@ -3979,6 +4044,123 @@ class CheckEngine {
         this.warn("EML295", `%%report "${report.name}" names entity "${report.entity}", which this model does not declare.`, {
           line: lineNo,
           hint: "entity: is used to group the report with its entity. Correct the name, or drop the key if the report spans several."
+        });
+      }
+    }
+  }
+  static roleKey(role) {
+    return role.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  }
+  static tableOf(entity) {
+    const isUpper = (ch) => ch !== undefined && ch >= "A" && ch <= "Z";
+    const isLower = (ch) => ch !== undefined && ch >= "a" && ch <= "z";
+    const isDigit = (ch) => ch !== undefined && ch >= "0" && ch <= "9";
+    let out = "";
+    for (let i = 0;i < entity.length; i++) {
+      const ch = entity[i];
+      const prev = entity[i - 1];
+      const next = entity[i + 1];
+      if (isUpper(ch) && i > 0 && (isLower(prev) || isDigit(prev) || isUpper(prev) && isLower(next))) {
+        out += "_";
+      }
+      out += ch;
+    }
+    return "bus_" + out.replace(/[\s-]+/g, "_").toLowerCase();
+  }
+  rbacReaders() {
+    const roles = new Map;
+    const readers = new Map;
+    for (const { text } of this.src.findAll(/^\s*%%rbac\b/)) {
+      const m = text.trim().match(/^%%rbac\s+(\S+)\s+on\s+([A-Za-z_]\w*)\.([A-Za-z_*][\w-]*(?:->[A-Za-z_]\w*)?)\s*$/);
+      if (!m)
+        continue;
+      const [roleExpr, entity, target] = caps(m, 3);
+      const named = roleExpr.split("|").map((part) => part.trim().replace(/^role:/i, "").trim()).filter(Boolean);
+      for (const role of named)
+        roles.set(CheckEngine.roleKey(role), role);
+      if (["read", "*", "all", "any"].includes(target.toLowerCase())) {
+        const set = readers.get(entity) ?? new Set;
+        for (const role of named)
+          set.add(CheckEngine.roleKey(role));
+        readers.set(entity, set);
+      }
+    }
+    return { roles, readers };
+  }
+  checkDashboardDirectives() {
+    const { roles } = this.rbacReaders();
+    const reportNames = new Set(this.model.reports.map((r) => r.name));
+    const seen = new Set;
+    for (const dashboard of this.model.dashboards) {
+      const lineNo = this.src.findLine(new RegExp(`%%dashboard\\s+${dashboard.name}\\b`));
+      const at = lineNo === undefined ? {} : { line: lineNo };
+      if (seen.has(dashboard.name)) {
+        this.error("EML297", `%%dashboard "${dashboard.name}" is declared more than once.`, {
+          ...at,
+          hint: "Dashboard names are keys, as report names are. Give the second one its own name."
+        });
+      }
+      seen.add(dashboard.name);
+      if (dashboard.reports.length === 0) {
+        this.error("EML297", `%%dashboard "${dashboard.name}" names no reports.`, {
+          ...at,
+          hint: "Add reports: <report-name>, <report-name>, … — the %%report directives it shows."
+        });
+      }
+      for (const name of dashboard.reports) {
+        if (!reportNames.has(name)) {
+          this.error("EML297", `%%dashboard "${dashboard.name}" lists "${name}", which is not a %%report.`, {
+            ...at,
+            hint: "Correct the name, or declare the %%report before listing it."
+          });
+        }
+      }
+      if (!dashboard.role) {
+        this.error("EML297", `%%dashboard "${dashboard.name}" names no role.`, {
+          ...at,
+          hint: "Add role: <role> — a role declared by a %%rbac line. A dashboard belongs to the role that opens it."
+        });
+      } else if (roles.size > 0 && !roles.has(CheckEngine.roleKey(dashboard.role))) {
+        this.error("EML297", `%%dashboard "${dashboard.name}" is for role "${dashboard.role}", which no %%rbac line names.`, {
+          ...at,
+          hint: `Declared roles: ${[...roles.values()].join(", ")}.`
+        });
+      }
+    }
+  }
+  checkReportingCoverage() {
+    const { roles, readers } = this.rbacReaders();
+    if (roles.size === 0)
+      return;
+    const entityOfTable = new Map;
+    for (const e of this.model.entities)
+      entityOfTable.set(CheckEngine.tableOf(e.name), e.name);
+    const canRun = (roleKey, sql) => {
+      if (roleKey === "administrator")
+        return true;
+      for (const table of sql.toLowerCase().match(/\bbus_[a-z0-9_]+/g) ?? []) {
+        const entity = entityOfTable.get(table);
+        if (!entity)
+          continue;
+        const allowed = readers.get(entity);
+        if (allowed && allowed.size > 0 && !allowed.has(roleKey))
+          return false;
+      }
+      return true;
+    };
+    for (const [roleKey, role] of roles) {
+      if (roleKey === "administrator")
+        continue;
+      const charted = this.model.reports.filter((r) => r.chart && canRun(roleKey, r.sql)).length;
+      if (charted < REPORTS_PER_ROLE) {
+        this.warn("EML298", `Role "${role}" can run ${charted} charted %%report directives; the minimum is ${REPORTS_PER_ROLE} reports and ${REPORTS_PER_ROLE} charts per role.`, {
+          hint: `Write ${REPORTS_PER_ROLE - charted} more %%report … chart: … lines over tables ${role} may read — distinct business questions across the whole domain, not variants of one query (reporting section 7.2).`
+        });
+      }
+      const dashboards = this.model.dashboards.filter((d) => d.role && CheckEngine.roleKey(d.role) === roleKey && d.reports.length >= DASHBOARD_MIN_REPORTS).length;
+      if (dashboards < DASHBOARDS_PER_ROLE) {
+        this.warn("EML299", `Role "${role}" has ${dashboards} dashboards of at least ${DASHBOARD_MIN_REPORTS} reports; the minimum is ${DASHBOARDS_PER_ROLE} per role.`, {
+          hint: `Add ${DASHBOARDS_PER_ROLE - dashboards} more %%dashboard <name> title: <T> role: ${role} reports: <report>, <report>, <report> lines — one per job ${role} does (reporting section 7.2).`
         });
       }
     }
@@ -5030,6 +5212,7 @@ function formatIssueDetail(issue) {
 function formatNextSteps(report) {
   const { errors, warnings } = report.counts;
   const dictionary = report.issues.filter((issue) => DICTIONARY_COMPLETENESS.has(issue.code));
+  const reporting = report.issues.filter((issue) => REPORTING_COVERAGE.has(issue.code));
   const fixable = report.issues.filter((issue) => issue.autoFixable);
   const manual = report.issues.filter((issue) => !issue.autoFixable);
   const first = manual.find((issue) => issue.severity === "error") ?? manual[0];
@@ -5046,10 +5229,20 @@ function formatNextSteps(report) {
   steps.push(`Re-run the checker over the whole file from zero after every round. A repair can ` + `uncover a problem an earlier error was masking, so a report from before your edit ` + `describes a document that no longer exists.`);
   if (errors > 0) {
     steps.push(`Repeat until the last line reads OK. The generator refuses this model while any error stands.`);
-  } else if (dictionary.length > 0) {
-    const codes = [...new Set(dictionary.map((issue) => issue.code))].sort().join(", ");
-    const other = warnings - dictionary.filter((issue) => issue.severity === "warning").length;
-    steps.push(`The generator accepts this model, and it is not finished. ${dictionary.length} of these ` + `(${codes}) are Application Dictionary gaps: the dictionary is what the application ` + `draws every screen from, and each one leaves it recording less than the model knows — ` + `a reference as text rather than a lookup, a closed vocabulary as a free text box, a ` + `field and its manual entry with nothing under it, a form with no sections. Clear them. \`node audit-model.mjs ` + `<file>.mmd\` fails while any stand, and the authoring protocol requires it to exit 0.` + (other > 0 ? ` The remaining ${other} warning${other === 1 ? " is" : "s are"} advisory.` : ""));
+  } else if (dictionary.length > 0 || reporting.length > 0) {
+    const required = [...dictionary, ...reporting];
+    const other = warnings - required.filter((issue) => issue.severity === "warning").length;
+    if (dictionary.length > 0) {
+      const codes = [...new Set(dictionary.map((issue) => issue.code))].sort().join(", ");
+      steps.push(`The generator accepts this model, and it is not finished. ${dictionary.length} of these ` + `(${codes}) are Application Dictionary gaps: the dictionary is what the application ` + `draws every screen from, and each one leaves it recording less than the model knows — ` + `a reference as text rather than a lookup, a closed vocabulary as a free text box, a ` + `field and its manual entry with nothing under it, a form with no sections. Clear them. \`node audit-model.mjs ` + `<file>.mmd\` fails while any stand, and the authoring protocol requires it to exit 0.`);
+    }
+    if (reporting.length > 0) {
+      const codes = [...new Set(reporting.map((issue) => issue.code))].sort((a, b) => a.localeCompare(b)).join(", ");
+      steps.push(`${dictionary.length > 0 ? "Also: " : "The generator accepts this model, and it is not finished. "}` + `${reporting.length} of these (${codes}) are reporting coverage gaps. Reporting is mandatory and ` + `covers the whole domain: every declared role needs at least 50 charted %%report directives it can ` + `run and 10 %%dashboards of its own. A role below that can see its records and cannot ask anything ` + `about them. Write the missing questions — distinct, across the role's whole domain — then group them. ` + `\`node audit-model.mjs <file>.mmd\` fails while any stand.`);
+    }
+    if (other > 0) {
+      steps.push(`The remaining ${other} warning${other === 1 ? " is" : "s are"} advisory.`);
+    }
   } else {
     steps.push(`The generator accepts this model now. Clearing the ${warnings} warning${warnings === 1 ? "" : "s"} is optional, but each one names something it accepts and quietly gets wrong.`);
   }
@@ -5067,6 +5260,7 @@ var DICTIONARY_COMPLETENESS = new Set([
   "EML172",
   "EML177"
 ]);
+var REPORTING_COVERAGE = new Set(["EML298", "EML299"]);
 function wrap(text, width = 74) {
   const out = [];
   let line = "";
@@ -5091,7 +5285,12 @@ function formatReport(report) {
     ...infos > 0 ? [count(infos, "note")] : []
   ].join(", ");
   const dictionaryGaps = report.issues.filter((issue) => DICTIONARY_COMPLETENESS.has(issue.code)).length;
-  const advisory = !report.ok ? "" : dictionaryGaps > 0 ? ` — the generator accepts this model, but ${dictionaryGaps} Application Dictionary gap${dictionaryGaps === 1 ? "" : "s"} above must still be cleared (audit-model.mjs fails while they stand)` : report.issues.length > 0 ? " — notes and warnings are advisory; the generator accepts this model" : "";
+  const reportingGaps = report.issues.filter((issue) => REPORTING_COVERAGE.has(issue.code)).length;
+  const gaps = [
+    dictionaryGaps > 0 ? `${dictionaryGaps} Application Dictionary gap${dictionaryGaps === 1 ? "" : "s"}` : "",
+    reportingGaps > 0 ? `${reportingGaps} reporting coverage gap${reportingGaps === 1 ? "" : "s"}` : ""
+  ].filter(Boolean);
+  const advisory = !report.ok ? "" : gaps.length > 0 ? ` — the generator accepts this model, but ${gaps.join(" and ")} above must still be cleared (audit-model.mjs fails while they stand)` : report.issues.length > 0 ? " — notes and warnings are advisory; the generator accepts this model" : "";
   const verdict = report.ok ? `OK — ${counted} (EML ${report.languageVersion})${advisory}` : `FAILED — ${counted} (EML ${report.languageVersion})`;
   if (report.issues.length === 0)
     return verdict;

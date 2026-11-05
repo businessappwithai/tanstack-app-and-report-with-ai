@@ -1,6 +1,6 @@
 # AppWithAI — model working session
 
-Protocol v2 · EML 1.2.0 · Updated 2026-10-29 · `https://www.appwithai.org/llms.txt`
+Protocol v2 · EML 1.2.0 · Updated 2026-11-05 · `https://www.appwithai.org/llms.txt`
 Goal: one complete `<business-name>.mmd`, all Mermaid, checker-clean and audit-clean.
 Host: write the URL in full, every time: `https://www.appwithai.org`. Write the URL in full, never a bare host.
 
@@ -25,13 +25,14 @@ M8. Validation is mandatory: checker, fixer if needed, checker again, then audit
 M9. Deliver exactly one complete `.mmd` (ENHANCE: original filename). Never a patch, excerpt, diff or abbreviated model. First non-blank line starts with `%%`.
 M10. Prose about a model is not a model. Headings and glossaries fail the checker with `EML004`.
 M11. A state field (the `status`/`state`/`stage` a `kind: state` machine drives) is never typed: a save puts a record in Draft, an accepted save moves it into its flow (or to Final with no flow), and from there it moves only by its action buttons, along drawn edges; every end state is Final and locked, Reopen takes it back. Give each move to its role: `%%rbac role:<roles> on <Entity>.<event>` (`reopen` for Reopen). No rule or saga moves a record its buttons move (`EML512`). Never put it in a `%%section` row (`EML178`): the form shows it read-only in its header and the list grid always shows it.
+M12. Reporting is mandatory and must cover the whole domain. Every role declared in `%%rbac` gets at least 50 reports and 50 charts (at least 50 `%%report` lines with `chart:`, each a distinct business question over tables that role may read) and at least 10 dashboards (`%%dashboard`, each listing at least 3 of its reports). The checker enforces it: `EML298`, `EML299`. Load L4 and follow §7.2. Never deliver fewer, and never pad with variants of one query.
 
 LOAD (lazy)
 Fetch a chunk only when its step arrives. Read it fully, then follow it. Never load one twice. Never act on a chunk from memory.
 L1. `https://www.appwithai.org/working-session.txt`: before the first question. Modes, research, review, gates A–D, delivery.
 L2. `https://www.appwithai.org/eml-syntax.txt`: before writing or changing any EML. Types, relationships, rules, workflows, access, directives.
 L3. `https://www.appwithai.org/eml-dictionary.txt`: before writing any entity. Lookups, enums, help, form layout.
-L4. `https://www.appwithai.org/eml-reporting.txt`: only if the model has or needs `%%report`, or the user asks about reports.
+L4. `https://www.appwithai.org/eml-reporting.txt`: always, before the behaviour gate (Gate D) and before writing any `%%report` (M12). §7.2 is the coverage rule.
 L5. `https://www.appwithai.org/checker-rules.txt`: before writing the file (§1.2) and before validating (§1.3, §8, §10). Also whenever a validator cannot be reached (§8.4).
 L6. `https://www.appwithai.org/enhancement-examples.txt`: only if a rule is still unclear.
 
@@ -59,4 +60,4 @@ S4. Required model content cannot be read completely: stop.
 S5. Every validator route exhausted: deliver labelled not validated (checker-rules.txt §1.3.5). Never invent results.
 
 OUTPUT
-Original inventory and verdict. Research findings and objections. Applied changes. Before/after counts. Checker and audit verdicts, verbatim. One complete downloadable `.mmd`.
+Original inventory and verdict. Research findings and objections. Applied changes. Before/after counts. Per-role report and dashboard counts (§7.2.6). Checker and audit verdicts, verbatim. One complete downloadable `.mmd`.

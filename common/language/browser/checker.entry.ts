@@ -161,6 +161,7 @@ export function formatIssueDetail(issue: CheckedIssue): string {
 export function formatNextSteps(report: CheckReport): string {
   const { errors, warnings } = report.counts;
   const dictionary = report.issues.filter((issue) => DICTIONARY_COMPLETENESS.has(issue.code));
+  const reporting = report.issues.filter((issue) => REPORTING_COVERAGE.has(issue.code));
   const fixable = report.issues.filter((issue) => issue.autoFixable);
   const manual = report.issues.filter((issue) => !issue.autoFixable);
   const first = manual.find((issue) => issue.severity === "error") ?? manual[0];
@@ -214,20 +215,36 @@ export function formatNextSteps(report: CheckReport): string {
     steps.push(
       `Repeat until the last line reads OK. The generator refuses this model while any error stands.`
     );
-  } else if (dictionary.length > 0) {
-    const codes = [...new Set(dictionary.map((issue) => issue.code))].sort().join(", ");
-    const other = warnings - dictionary.filter((issue) => issue.severity === "warning").length;
-    steps.push(
-      `The generator accepts this model, and it is not finished. ${dictionary.length} of these ` +
-        `(${codes}) are Application Dictionary gaps: the dictionary is what the application ` +
-        `draws every screen from, and each one leaves it recording less than the model knows — ` +
-        `a reference as text rather than a lookup, a closed vocabulary as a free text box, a ` +
-        `field and its manual entry with nothing under it, a form with no sections. Clear them. \`node audit-model.mjs ` +
-        `<file>.mmd\` fails while any stand, and the authoring protocol requires it to exit 0.` +
-        (other > 0
-          ? ` The remaining ${other} warning${other === 1 ? " is" : "s are"} advisory.`
-          : "")
-    );
+  } else if (dictionary.length > 0 || reporting.length > 0) {
+    const required = [...dictionary, ...reporting];
+    const other = warnings - required.filter((issue) => issue.severity === "warning").length;
+    if (dictionary.length > 0) {
+      const codes = [...new Set(dictionary.map((issue) => issue.code))].sort().join(", ");
+      steps.push(
+        `The generator accepts this model, and it is not finished. ${dictionary.length} of these ` +
+          `(${codes}) are Application Dictionary gaps: the dictionary is what the application ` +
+          `draws every screen from, and each one leaves it recording less than the model knows — ` +
+          `a reference as text rather than a lookup, a closed vocabulary as a free text box, a ` +
+          `field and its manual entry with nothing under it, a form with no sections. Clear them. \`node audit-model.mjs ` +
+          `<file>.mmd\` fails while any stand, and the authoring protocol requires it to exit 0.`
+      );
+    }
+    if (reporting.length > 0) {
+      const codes = [...new Set(reporting.map((issue) => issue.code))]
+        .sort((a, b) => a.localeCompare(b))
+        .join(", ");
+      steps.push(
+        `${dictionary.length > 0 ? "Also: " : "The generator accepts this model, and it is not finished. "}` +
+          `${reporting.length} of these (${codes}) are reporting coverage gaps. Reporting is mandatory and ` +
+          `covers the whole domain: every declared role needs at least 50 charted %%report directives it can ` +
+          `run and 10 %%dashboards of its own. A role below that can see its records and cannot ask anything ` +
+          `about them. Write the missing questions — distinct, across the role's whole domain — then group them. ` +
+          `\`node audit-model.mjs <file>.mmd\` fails while any stand.`
+      );
+    }
+    if (other > 0) {
+      steps.push(`The remaining ${other} warning${other === 1 ? " is" : "s are"} advisory.`);
+    }
   } else {
     steps.push(
       `The generator accepts this model now. Clearing the ${warnings} warning${
@@ -267,6 +284,17 @@ const DICTIONARY_COMPLETENESS = new Set([
   "EML172",
   "EML177",
 ]);
+
+/**
+ * The reporting minimums (§7.2): every declared `%%rbac` role needs 50 charted
+ * `%%report` directives it can run and 10 `%%dashboard`s of its own. Warnings by
+ * severity, because the generator accepts a model without them, and gaps by
+ * consequence — a role that can see its records and ask nothing about them — so
+ * `audit-model.mjs` fails while any stands, exactly as it does for the nine
+ * dictionary codes above. Kept apart from that set because they are not about the
+ * Application Dictionary, and the closing words must not say they are.
+ */
+const REPORTING_COVERAGE = new Set(["EML298", "EML299"]);
 
 /** Wrap a step to a readable measure, indented under its own number. */
 function wrap(text: string, width = 74): string {
@@ -325,12 +353,21 @@ export function formatReport(report: CheckReport): string {
   const dictionaryGaps = report.issues.filter((issue) =>
     DICTIONARY_COMPLETENESS.has(issue.code)
   ).length;
+  const reportingGaps = report.issues.filter((issue) =>
+    REPORTING_COVERAGE.has(issue.code)
+  ).length;
+  const gaps = [
+    dictionaryGaps > 0
+      ? `${dictionaryGaps} Application Dictionary gap${dictionaryGaps === 1 ? "" : "s"}`
+      : "",
+    reportingGaps > 0
+      ? `${reportingGaps} reporting coverage gap${reportingGaps === 1 ? "" : "s"}`
+      : "",
+  ].filter(Boolean);
   const advisory = !report.ok
     ? ""
-    : dictionaryGaps > 0
-      ? ` — the generator accepts this model, but ${dictionaryGaps} Application Dictionary gap${
-          dictionaryGaps === 1 ? "" : "s"
-        } above must still be cleared (audit-model.mjs fails while they stand)`
+    : gaps.length > 0
+      ? ` — the generator accepts this model, but ${gaps.join(" and ")} above must still be cleared (audit-model.mjs fails while they stand)`
       : report.issues.length > 0
         ? " — notes and warnings are advisory; the generator accepts this model"
         : "";
