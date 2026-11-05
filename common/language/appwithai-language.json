@@ -1412,6 +1412,27 @@
           "foreignKeysAreUuid": "A foreign key and a primary key are both UUID, in both stacks, so a join is written plainly: ON c.account_id = p.id. Do not cast. `::text` was needed while the browser stack typed a foreign key as VARCHAR; it does not any more, and PostgreSQL has no implicit cast back, so a cast that is no longer needed is now the thing that breaks the query.",
           "whereItIsCompiled": "Compiled twice, by two readers, and neither replaces the other. Here, packages/generator/src/reports/index.ts puts each report into the generated application itself: a sys_report row served at /sys/reports and shown under Admin > Analysis in the NestJS stack, and a model.json entry served at /api/reports and shown under Reports in the browser application. Separately, businessappwithai/app-and-report-with-ai-tanstack compiles the same directive with common/build/reporting-pack.ts into a saved query, a report definition and, where chart: is set, a chart, seeded into the Enterprise Reporting platform ahead of the derived baseline. The real platform runs beside a deployed application, under the orchestrator's docker-compose or as the report service of the deployable archive's own compose file, and the browser application previews the same pack; see generatorContract.reportingApplication."
         }
+      },
+      {
+        "keyword": "%%dashboard",
+        "form": "%%dashboard <name> title: <Title> role: <role> reports: <report-name>, <report-name>, ... [help: <who opens it and what they decide>]",
+        "status": "compiled",
+        "consumedBy": [
+          "packages/generator/src/reports/index.ts -> compileDashboards -> reporting pack dashboards",
+          "language/cli/src/parser.ts -> model.dashboards",
+          "language/checker.ts (shape: EML297; per-role minimums: EML298, EML299)"
+        ],
+        "purpose": "Group a role's own %%report directives into a named dashboard. The reporting pack derives one overview dashboard from structure; that cannot say which questions belong together for the person who asks them. A dashboard belongs to the declared %%rbac role named by role:, shows the %%report directives named by reports: in that order (a charted report as a chart tile, an uncharted one as a table tile), and is served by the reporting platform and its browser preview beside the overview.",
+        "examples": [
+          "%%dashboard sales-manager-pipeline-review title: Pipeline review role: sales_manager reports: sales-manager-pipeline-by-stage, sales-manager-pipeline-by-owner, sales-manager-slipped-deals help: The Monday forecast meeting."
+        ],
+        "notes": {
+          "roleIsRequired": "role: must name a role some %%rbac line declares; a dashboard with no role, or an unknown one, is an error (EML297). A dashboard that no role owns is nobody's.",
+          "reportsMustExist": "Every name in reports: must be a %%report in the model (EML297). A dashboard may list a report another role also runs, but it should list reports its own role can run: every table the report names must be on that role's read list, or the tile answers 403.",
+          "namesAreKeys": "The name is the pack key and the platform's dashboard name; declared twice is an error (EML297).",
+          "coverageMinimums": "Reporting is mandatory and covers the whole domain. Every declared %%rbac role needs at least 50 charted %%report directives it can run - one charted report is a report and a chart - and at least 10 dashboards of its own, each listing at least 3 reports so that ten one-report dashboards cannot stand in for ten. The checker warns below either minimum (EML298 for reports, EML299 for dashboards) and audit-model.mjs fails while a warning stands. A role is counted over the %%report directives whose every bus_ table it may read: %%rbac read (or *) lines decide, an entity with no read line is open to every role, and a role called administrator reads everything and, inheriting every other role's reports and dashboards, owes no minimum of its own.",
+          "whereItIsCompiled": "Compiled once, by buildReportingPack, into one reporting dashboard per %%dashboard beside the derived overview. Both the real platform (seeded from the pack) and the browser application's preview (model.json) read that pack."
+        }
       }
     ],
     "statusVocabulary": {
@@ -1492,7 +1513,7 @@
         "queries": "Saved SQL over the application's bus_ tables, each carrying the tables it reads.",
         "reports": "Report definitions over those queries.",
         "charts": "Chart definitions (bar, line, pie, area) over those queries.",
-        "dashboards": "One overview dashboard: up to four authored charts first, then one tile for each of the six most central entities.",
+        "dashboards": "The overview dashboard - up to four authored charts first, then one tile for each of the six most central entities - plus one dashboard per %%dashboard, each carrying the role it is for.",
         "access": "One reporting role per declared %%rbac role, plus the administrator, each with the bus_ tables it may read."
       },
       "derivedFrom": [
@@ -1525,6 +1546,10 @@
           "yields": "the author's own query, report and (with chart:) chart, listed first and placed at the top of the dashboard; a derived item with the same name is dropped in its favour"
         },
         {
+          "declares": "%%dashboard",
+          "yields": "a dashboard of the named role's own reports, one tile per report in the order listed, beside the overview"
+        },
+        {
           "declares": "%%rbac ... .read",
           "yields": "the tables each reporting role may read"
         },
@@ -1551,7 +1576,7 @@
         }
       ],
       "signIn": "Two applications, two sign-ins, never merged. The application's account for a role is <role>@<app>.example.com and the reporting account is <role>@<app>.reports.example.com; the administrator is admin@admin.com on both sides, as two different accounts in two different user tables. Neither password works on the other side. A role in the application decides what a user may do to a record; a reporting role decides which tables their queries may read. Only read rules narrow a reporting role.",
-      "verification": "The checker holds %%report to its shape (EML290-EML296) and cannot see whether a column exists. common/scripts/check-reporting-pack.ts in app-and-report-with-ai-tanstack runs every derived and authored query against a schema the generator actually emitted."
+      "verification": "The checker holds %%report to its shape (EML290-EML296), %%dashboard to its shape (EML297) and every declared role to the reporting minimums (EML298, EML299), and cannot see whether a column exists. common/scripts/check-reporting-pack.ts in app-and-report-with-ai-tanstack runs every derived and authored query against a schema the generator actually emitted."
     },
     "pipeline": [
       "1. ERD section -> MermaidParser -> Entity[] + Relationship[] -> migrations, DTOs, services, controllers, forms, tables. The same pass reads %%index into entity.indexes and %%enum / %%field enum: into bound enums.",

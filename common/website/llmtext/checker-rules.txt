@@ -1,6 +1,6 @@
 # AppWithAI — validation rules and the delivery checklist (chunk `checker-rules.txt` of https://www.appwithai.org/llms.txt)
 
-> Chunk map (each is `https://www.appwithai.org/<name>`): llms.txt controller · working-session.txt §1.0, §1.1, §1.4 · checker-rules.txt §1.2, §1.3, §8, §10 · eml-syntax.txt §0, §2–§7 · eml-dictionary.txt §3.7 · eml-reporting.txt §7.1 · enhancement-examples.txt §9
+> Chunk map (each is `https://www.appwithai.org/<name>`): llms.txt controller · working-session.txt §1.0, §1.1, §1.4 · checker-rules.txt §1.2, §1.3, §8, §10 · eml-syntax.txt §0, §2–§7 · eml-dictionary.txt §3.7 · eml-reporting.txt §7.1, §7.2 · enhancement-examples.txt §9
 
 ## Rules that govern every delivery
 
@@ -278,7 +278,7 @@ A clean run starts the review; it does not end it. After every clean run:
 
 1. Re-read the file against the dossiers, entity by entity and column by column:
    every value decided in §1.1 is in the file, as decided.
-2. Confirm none of the nine dictionary codes (§1.2), and the audit's
+2. Confirm none of the nine dictionary codes (§1.2), neither reporting coverage code (`EML298`, `EML299`: §7.2), and the audit's
    `23 passed, 0 failed`.
 3. Read every help line and every section heading as the person using the
    generated screen would. Rewrite any line that would not tell a new employee
@@ -836,12 +836,13 @@ the model matches the business — and for the reasoning behind the ones it can.
    also read it (§6). A model where one role sees all forty tables is the same
    application once, not four times.
 
-18. **If the model carries `%%report` directives, more than one role has them.**
-   A reporting layer that answers one person's questions is that person's saved
-   query. Walk the roles on the `%%rbac` matrix: a role with a read-list and no
-   report can see its records and cannot ask anything about them. Reports are
-   optional — a model without any is complete — but a model with exactly one
-   role's worth is half-finished rather than economical.
+18. **Every declared role has at least 50 charted `%%report` lines and 10 `%%dashboard`s.**
+   Reporting is mandatory and covers the whole domain (§7.2): at least 50 reports
+   and 50 charts per role, each a distinct business question over tables that
+   role may read, and at least 10 dashboards of at least 3 of its reports each.
+   The checker counts both (`EML298`, `EML299`) and the audit fails while either
+   stands. A role with a read-list and no reports can see its records and cannot
+   ask anything about them; a role below fifty and ten is half-finished.
 
 **The handover**
 

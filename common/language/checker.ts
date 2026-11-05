@@ -319,6 +319,18 @@ export function isForeignKeyColumnName(columnName: string): boolean {
 // Check engine
 // ---------------------------------------------------------------------------
 
+/**
+ * The reporting minimums, per declared `%%rbac` role (EML298, EML299).
+ *
+ * Reporting is mandatory and covers the whole domain: 50 charted `%%report`
+ * directives a role can run — one is a report and a chart — and 10 dashboards of
+ * its own, each holding at least DASHBOARD_MIN_REPORTS of those reports so that
+ * ten one-report dashboards cannot stand in for ten.
+ */
+const REPORTS_PER_ROLE = 50;
+const DASHBOARDS_PER_ROLE = 10;
+const DASHBOARD_MIN_REPORTS = 3;
+
 class CheckEngine {
   private issues: Issue[] = [];
   /**
@@ -441,6 +453,8 @@ class CheckEngine {
     this.checkStepDirectives();
     this.checkActionDirectives();
     this.checkReportDirectives();
+    this.checkDashboardDirectives();
+    this.checkReportingCoverage();
     this.checkRuleDirectives();
     this.checkRules();
     this.checkWorkflows();
@@ -2115,6 +2129,174 @@ class CheckEngine {
           {
             line: lineNo,
             hint: "entity: is used to group the report with its entity. Correct the name, or drop the key if the report spans several.",
+          }
+        );
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // EML297-EML299: %%dashboard directives, and the per-role reporting minimums
+  // -------------------------------------------------------------------------
+  //
+  // Reporting is mandatory and covers the whole domain: every declared role gets
+  // at least REPORTS_PER_ROLE charted `%%report` directives it can run, and at
+  // least DASHBOARDS_PER_ROLE dashboards of its own. The shape of a `%%dashboard`
+  // is an error (EML297); falling short of a minimum is a warning (EML298,
+  // EML299) that the audit treats as a gap, like the dictionary-completeness
+  // codes, because the generator would still accept the model and the role would
+  // simply be left unable to ask anything about its own work.
+
+  /** Role name as `%%rbac` and the generator compare it: case, spaces and hyphens ignored. */
+  private static roleKey(role: string): string {
+    return role
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_");
+  }
+
+  /**
+   * `KYCRecord` -> `kyc_record`; the generator's `tableNameFor`, which the pack's SQL must name.
+   *
+   * An underscore goes before a capital that follows a lower-case letter or digit,
+   * and before the last capital of an acronym run (the one that starts the next
+   * word). Written as a scan rather than as the generator's two regexes: the
+   * second of those backtracks, and this runs once per entity per check.
+   */
+  private static tableOf(entity: string): string {
+    const isUpper = (ch: string | undefined) => ch !== undefined && ch >= "A" && ch <= "Z";
+    const isLower = (ch: string | undefined) => ch !== undefined && ch >= "a" && ch <= "z";
+    const isDigit = (ch: string | undefined) => ch !== undefined && ch >= "0" && ch <= "9";
+    let out = "";
+    for (let i = 0; i < entity.length; i++) {
+      const ch = entity[i];
+      const prev = entity[i - 1];
+      const next = entity[i + 1];
+      if (isUpper(ch) && i > 0 && (isLower(prev) || isDigit(prev) || (isUpper(prev) && isLower(next)))) {
+        out += "_";
+      }
+      out += ch;
+    }
+    return "bus_" + out.replace(/[\s-]+/g, "_").toLowerCase();
+  }
+
+  /**
+   * Who may read what, as `%%rbac` declares it: every role the model names, and
+   * for each entity the roles its `read` (or `*`) lines admit. An entity with no
+   * such line is open to every role; a role called administrator reads all, and is
+   * exempt from the minimums because it inherits every other role's reports.
+   */
+  private rbacReaders(): { roles: Map<string, string>; readers: Map<string, Set<string>> } {
+    const roles = new Map<string, string>();
+    const readers = new Map<string, Set<string>>();
+    for (const { text } of this.src.findAll(/^\s*%%rbac\b/)) {
+      const m = text
+        .trim()
+        .match(/^%%rbac\s+(\S+)\s+on\s+([A-Za-z_]\w*)\.([A-Za-z_*][\w-]*(?:->[A-Za-z_]\w*)?)\s*$/);
+      if (!m) continue;
+      const [roleExpr, entity, target] = caps(m, 3);
+      const named = roleExpr
+        .split("|")
+        .map((part) => part.trim().replace(/^role:/i, "").trim())
+        .filter(Boolean);
+      for (const role of named) roles.set(CheckEngine.roleKey(role), role);
+      if (["read", "*", "all", "any"].includes(target.toLowerCase())) {
+        const set = readers.get(entity) ?? new Set<string>();
+        for (const role of named) set.add(CheckEngine.roleKey(role));
+        readers.set(entity, set);
+      }
+    }
+    return { roles, readers };
+  }
+
+  private checkDashboardDirectives(): void {
+    const { roles } = this.rbacReaders();
+    const reportNames = new Set(this.model.reports.map((r) => r.name));
+    const seen = new Set<string>();
+
+    for (const dashboard of this.model.dashboards) {
+      const lineNo = this.src.findLine(new RegExp(`%%dashboard\\s+${dashboard.name}\\b`));
+      const at = lineNo === undefined ? {} : { line: lineNo };
+
+      if (seen.has(dashboard.name)) {
+        this.error("EML297", `%%dashboard "${dashboard.name}" is declared more than once.`, {
+          ...at,
+          hint: "Dashboard names are keys, as report names are. Give the second one its own name.",
+        });
+      }
+      seen.add(dashboard.name);
+
+      if (dashboard.reports.length === 0) {
+        this.error("EML297", `%%dashboard "${dashboard.name}" names no reports.`, {
+          ...at,
+          hint: "Add reports: <report-name>, <report-name>, … — the %%report directives it shows.",
+        });
+      }
+      for (const name of dashboard.reports) {
+        if (!reportNames.has(name)) {
+          this.error("EML297", `%%dashboard "${dashboard.name}" lists "${name}", which is not a %%report.`, {
+            ...at,
+            hint: "Correct the name, or declare the %%report before listing it.",
+          });
+        }
+      }
+
+      if (!dashboard.role) {
+        this.error("EML297", `%%dashboard "${dashboard.name}" names no role.`, {
+          ...at,
+          hint: "Add role: <role> — a role declared by a %%rbac line. A dashboard belongs to the role that opens it.",
+        });
+      } else if (roles.size > 0 && !roles.has(CheckEngine.roleKey(dashboard.role))) {
+        this.error("EML297", `%%dashboard "${dashboard.name}" is for role "${dashboard.role}", which no %%rbac line names.`, {
+          ...at,
+          hint: `Declared roles: ${[...roles.values()].join(", ")}.`,
+        });
+      }
+    }
+  }
+
+  private checkReportingCoverage(): void {
+    const { roles, readers } = this.rbacReaders();
+    if (roles.size === 0) return;
+
+    const entityOfTable = new Map<string, string>();
+    for (const e of this.model.entities) entityOfTable.set(CheckEngine.tableOf(e.name), e.name);
+
+    /** Can this role run this report: does every table its SQL names admit the role? */
+    const canRun = (roleKey: string, sql: string): boolean => {
+      if (roleKey === "administrator") return true;
+      for (const table of sql.toLowerCase().match(/\bbus_[a-z0-9_]+/g) ?? []) {
+        const entity = entityOfTable.get(table);
+        if (!entity) continue; // a table no entity declares is not narrowed by %%rbac
+        const allowed = readers.get(entity);
+        if (allowed && allowed.size > 0 && !allowed.has(roleKey)) return false;
+      }
+      return true;
+    };
+
+    for (const [roleKey, role] of roles) {
+      // The built-in administrator runs every report and opens every dashboard the
+      // other roles have, so it inherits their sets rather than owing one of its own.
+      if (roleKey === "administrator") continue;
+      const charted = this.model.reports.filter((r) => r.chart && canRun(roleKey, r.sql)).length;
+      if (charted < REPORTS_PER_ROLE) {
+        this.warn(
+          "EML298",
+          `Role "${role}" can run ${charted} charted %%report directives; the minimum is ${REPORTS_PER_ROLE} reports and ${REPORTS_PER_ROLE} charts per role.`,
+          {
+            hint: `Write ${REPORTS_PER_ROLE - charted} more %%report … chart: … lines over tables ${role} may read — distinct business questions across the whole domain, not variants of one query (reporting section 7.2).`,
+          }
+        );
+      }
+      const dashboards = this.model.dashboards.filter(
+        (d) => d.role && CheckEngine.roleKey(d.role) === roleKey && d.reports.length >= DASHBOARD_MIN_REPORTS
+      ).length;
+      if (dashboards < DASHBOARDS_PER_ROLE) {
+        this.warn(
+          "EML299",
+          `Role "${role}" has ${dashboards} dashboards of at least ${DASHBOARD_MIN_REPORTS} reports; the minimum is ${DASHBOARDS_PER_ROLE} per role.`,
+          {
+            hint: `Add ${DASHBOARDS_PER_ROLE - dashboards} more %%dashboard <name> title: <T> role: ${role} reports: <report>, <report>, <report> lines — one per job ${role} does (reporting section 7.2).`,
           }
         );
       }

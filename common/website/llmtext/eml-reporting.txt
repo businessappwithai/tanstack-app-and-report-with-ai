@@ -1,6 +1,6 @@
 # AppWithAI — the reporting application (chunk `eml-reporting.txt` of https://www.appwithai.org/llms.txt)
 
-> Chunk map (each is `https://www.appwithai.org/<name>`): llms.txt controller · working-session.txt §1.0, §1.1, §1.4 · checker-rules.txt §1.2, §1.3, §8, §10 · eml-syntax.txt §0, §2–§7 · eml-dictionary.txt §3.7 · eml-reporting.txt §7.1 · enhancement-examples.txt §9
+> Chunk map (each is `https://www.appwithai.org/<name>`): llms.txt controller · working-session.txt §1.0, §1.1, §1.4 · checker-rules.txt §1.2, §1.3, §8, §10 · eml-syntax.txt §0, §2–§7 · eml-dictionary.txt §3.7 · eml-reporting.txt §7.1, §7.2 · enhancement-examples.txt §9
 
 ### 7.1 The reporting application — what Enterprise Reporting makes of the same model
 
@@ -39,6 +39,7 @@ model declares, and a model that declares less gets a smaller pack:
 | `integer` and `decimal` columns | **Measures** — totals and averages, grouped by the entity's primary enum column |
 | A `oneToMany` relationship | **Children per parent**, ranked |
 | A `%%report` | The author's own question, listed first and placed at the top of the dashboard |
+| A `%%dashboard` | A dashboard of the named role's own reports, one tile each in the order listed, beside the overview (§7.2.4) |
 | `%%rbac … .read` | One reporting role per declared role, reading exactly the tables those lines admit |
 | `%%entity … help:` and `%%field … help:` | The name and description of every report, chart and query |
 
@@ -85,7 +86,123 @@ restriction has nothing to restrict there — and an entity no role may read is
 an entity no reporting role can see either.
 
 **What is verified, and what is not.** The checker holds a `%%report` to its
-shape (`EML290`–`EML296`) and cannot know whether a column it names exists.
+shape (`EML290`–`EML296`), a `%%dashboard` to its shape (`EML297`) and each declared role to the minimums of §7.2 (`EML298`, `EML299`), and cannot know whether a column it names exists.
 `check-reporting-pack.ts` in the orchestrator is what runs every derived and
 authored query against a schema the generator actually emitted, so a renamed
 column fails CI rather than every report at run time.
+
+### 7.2 Reporting coverage — mandatory, and it is the whole domain
+
+The derived baseline in §7.1 describes the *shape* of the data. It does not
+count here. Only the `%%report` and `%%dashboard` lines the author writes count
+toward the minimums below, because only the author knows what the business asks.
+
+**7.2.1 The minimum, per role.** Every role declared in `%%rbac` — one per
+reporting account (§7.1) — gets:
+
+- **at least 50 reports and at least 50 charts**: 50 `%%report` lines with
+  `chart:`. One charted `%%report` is one report and one chart, so 50 of them
+  meets both numbers; reports without a chart are extra, never a substitute.
+- **at least 10 dashboards** of its own: 10 `%%dashboard` lines, each listing at
+  least 3 of that role's reports, so that ten one-report dashboards cannot stand
+  in for ten.
+
+Fifty and ten are floors. A role that reads forty tables should have far more.
+The checker enforces them: `EML298` for a role under 50 charted reports and
+`EML299` for a role under 10 dashboards, each printing the role's count. They are
+warnings because the generator still accepts the model, and they are gaps because
+`audit-model.mjs` fails while one stands.
+
+**7.2.2 What counts toward a role.**
+
+- The `%%report` must be one that role **can run**: every `bus_` table its SQL
+  names is on that role's read list (`%%rbac role:<role> on <Entity>.read`, or an
+  entity with no `read` line at all, which is open to every role). The checker
+  counts exactly this. A report a role would be refused is not that role's report.
+- It must be a **distinct business question**: it differs from the role's other
+  reports in the measure, the grouping, the population it filters, or the time
+  window — and a person would act on its answer. The same query with another
+  `LIMIT`, `ORDER BY` or column order is one report, not two. The checker cannot
+  tell; you must. Never pad.
+- It has a plain-language `title:` that reads as the question, and a `help:`
+  saying who asks it and what they do with the answer.
+- The built-in `administrator` (written `role:administrator`) runs every report
+  and opens every dashboard the other roles have, so it owes no set of its own.
+  A role you invent, even one called `admin`, is an ordinary role and owes its
+  50 and 10. The generated `user` account holds no functional role and owes none.
+- A report counts for **every** role that can run it. Where several roles read
+  the same tables, one set of distinct questions over those tables serves them
+  all — that is how a small model reaches 50 per role without padding — but each
+  role must still be able to run its 50, and a question no one in that role would
+  ask does not count for it in spirit however the checker counts it.
+
+**7.2.3 Cover the domain, not one corner of it.** Walk every entity the role may
+read and write at least one question about it; then keep adding from these
+families until the role has 50 distinct ones. A role whose reports are all
+"count of X by status" has not covered its domain.
+
+| Family | The question it answers |
+|---|---|
+| Volume and trend | How many, per month and per quarter; this period against the last |
+| Lifecycle | How many sit in each state; how long do they stay; where do they stall |
+| Exceptions | What is overdue, unassigned, blocked, expiring, or missing a required fact |
+| Rankings | The ten largest, the slowest, the most frequent, by owner, customer or site |
+| Money and quantity | Totals, averages, variance, ageing, margin — each over its own measure |
+| Conversion and flow | What share moves from one state to the next; throughput per period |
+| Relationships | Children per parent, parents with none, value rolled up from child records |
+| Quality and compliance | Duplicates, gaps, out-of-policy values, items awaiting approval |
+| Ownership and workload | Per person, per team, per queue; who is overloaded or idle |
+
+A role with a short read list may have to lean on these families harder, but if
+its tables genuinely cannot support 50 distinct questions, that is a modelling
+finding, not a reason to pad: at Gate B widen the role's `read` lines (to
+non-sensitive tables — never to records the role should not see) or merge it with
+a neighbouring role, and say which you did. Two roles that read the same tables
+share one set of questions.
+
+**7.2.4 Dashboards — one per job the role does.**
+
+```
+%%dashboard <name> title: <Title> role: <role> reports: <report>, <report>, … [help: <who opens it and what they decide>]
+```
+
+A dashboard is a role's own reports grouped for a job: the Monday forecast
+review, the morning dispatch board, the month-end close. Write ten per role, one
+for each distinct thing that role sits down to do, and put 4 to 8 of the role's
+reports on each (the floor is 3). A report may appear on more than one dashboard.
+
+- `role:` must be a role some `%%rbac` line declares, and every name in
+  `reports:` must be a `%%report` in the file. Either wrong is an error
+  (`EML297`), as is a dashboard with no role, no reports, or a name already used.
+- List only reports that role can run (§7.2.2): a tile whose report reads a table
+  the role may not read answers 403.
+- A charted report is drawn as a chart tile, half a row wide; an uncharted one as
+  a table tile, a full row. Lead with the charts.
+- The pack carries each dashboard beside the derived overview (§7.1): the real
+  platform is seeded with them, and the browser preview lists them.
+
+**7.2.5 How to write the reports so they hold.**
+
+- Name each new report for what it asks, lower-case and hyphenated, with the
+  role as a prefix when only that role asks it (`sales-manager-open-pipeline`)
+  and the subject as a prefix when several roles share it (`sessions-by-weekday`).
+  The name is the key a report is stored under (`EML292`), so it must be unique
+  across the whole file.
+- Every charted report names both axes, and both must be columns in its
+  `SELECT` list (alias them): `chart: bar x: stage y: total`. Use `line` or
+  `area` for time, `pie` only up to six slices, `bar` otherwise.
+- Every report keeps the rules of §7.1 and the `%%report` entry in the syntax
+  chunk: it only reads, it filters `deleted_at IS NULL`, it joins on the keys
+  directly, and it is one line with `sql:` last.
+- **ENHANCE:** reports and dashboards already in the file keep their names and
+  count toward a role when the role can run them. Add what is missing to reach 50
+  and 10 per role; never rename, merge or drop an existing `%%report` or
+  `%%dashboard`.
+
+**7.2.6 Prove it.** Run the checker on the delivered bytes. Each role under a
+minimum prints its own `EML298` or `EML299` with the count it found; write the
+missing reports and dashboards until neither code appears, then run the audit,
+which fails while one stands. State, for each declared role, its charted report
+count and its dashboard count as the checker allowed them — a role that clears
+both warnings has at least 50 and 10. Never write a number a run did not
+support, and never deliver with a reporting warning standing.
