@@ -2972,6 +2972,54 @@ class CheckEngine {
           }
         }
 
+        // EML514: a CreateEntity step inserts exactly the columns it names, and nothing
+        // fills a required reference it leaves out — the insert is refused (NOT NULL), the
+        // process fails and, for a rule-started one, so does the save that triggered it.
+        if (typeName === "CreateEntity" && has("fields") && entityProp) {
+          let named: Set<string> | undefined;
+          try {
+            const parsed = JSON.parse(props.fields!);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              named = new Set(Object.keys(parsed).map((key) => key.trim()));
+            }
+          } catch {
+            named = undefined; // EML267 already says so
+          }
+          const wanted = entityProp.toLowerCase().replace(/^bus_/, "");
+          const target = this.model.entities.find((entity) => {
+            const snake = entity.name
+              .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+              .replace(/-/g, "_")
+              .toLowerCase();
+            return entity.name.toLowerCase() === wanted || snake === wanted;
+          });
+          if (named && target) {
+            const missing = target.attributes
+              .filter(
+                (attribute) =>
+                  attribute.required &&
+                  attribute.isForeignKey &&
+                  !attribute.isPrimaryKey &&
+                  !named.has(attribute.name)
+              )
+              .map((attribute) => attribute.name);
+            if (missing.length > 0) {
+              this.warn(
+                "EML514",
+                `%%step ${nodeId} (CreateEntity ${target.name}) leaves required reference${
+                  missing.length > 1 ? "s" : ""
+                } ${missing.join(", ")} unset, so the insert is refused.`,
+                {
+                  line: lineNo,
+                  hint: `Add ${missing
+                    .map((name) => `"${name}"`)
+                    .join(", ")} to fields (a column of the triggering record, or a variable an earlier CreateEntity published with as:), or mark the column OPTIONAL in the erDiagram.`,
+                }
+              );
+            }
+          }
+        }
+
         // EML271: a decision table that will not parse means the step is
         // skipped, and a workflow whose branch silently never runs looks like
         // a workflow that ran and decided nothing.
