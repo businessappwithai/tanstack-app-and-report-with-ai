@@ -91,6 +91,22 @@ shape (`EML290`–`EML296`), a `%%dashboard` to its shape (`EML297`) and each de
 authored query against a schema the generator actually emitted, so a renamed
 column fails CI rather than every report at run time.
 
+**The two applications are tested together, on demand.** Every generated
+application carries an end-to-end suite derived from the same model, and its
+`docker-compose.yml` runs it: `docker compose run --rm e2e` (behind the `test`
+profile, so `up` never starts it; `docker compose run --rm e2e-ui` is its browser
+layer, Chromium driving both applications). It waits for both applications and for the
+seeder, then signs in to the *platform* as each reporting role and holds it to
+`reporting/reporting-pack.json` — every report, chart and dashboard present by
+name, every dashboard widget, every report and chart actually run, and each
+role let in to a report exactly when its tables admit the query. It also writes
+records through the application and asserts the platform's register report for
+that entity sees them. Two consequences for an author: a model whose `%%rbac`
+leaves a role no entity to read gives that role an empty `tables` list — which
+means *every* table only for the administrator, and *none* for anyone else — and
+a report the platform's SQL analyser cannot parse is refused even to the
+administrator, so keep authored `%%report` SQL to plain `SELECT … FROM … JOIN`.
+
 ### 7.2 Reporting coverage — mandatory, and it is the whole domain
 
 The derived baseline in §7.1 describes the *shape* of the data. It does not

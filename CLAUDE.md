@@ -356,6 +356,15 @@ a bare host, which is what its own tooling then tried to resolve. Nothing in thi
 repository checks it; the assertions are upstream in `bun run test:llmtext` and
 on the site in `scripts/check-spec.mjs`, each against its own copies.
 
+## The generated application tests itself
+
+An application the generator writes carries `docker compose run --rm e2e` (API suites, including three that hold the
+reporting platform to the pack and check both applications on one set of data) and `docker compose run --rm e2e-ui`
+(Playwright), derived from the model — `generatorContract.generatedE2E` in `common/language/appwithai-language.json`
+and `eml-reporting.txt` §7.1 describe it. It is the generator's, in `app-with-ai-tanstack`; this repository carries the
+description and the pin. Two things it taught: an empty `tables` list in a pack role means every table for the
+administrator **only**, and the platform must trust the origin it is signed in from (`CORS_ORIGIN`/`BETTER_AUTH_URL`).
+
 ## The language
 
 `common/language/appwithai-language.json` is the **single source of truth** —
