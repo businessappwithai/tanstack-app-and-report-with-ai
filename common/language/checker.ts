@@ -1100,6 +1100,31 @@ class CheckEngine {
         );
       }
 
+      // EML515: an enum of words on a column that cannot hold words. The dictionary offers
+      // the enum's values as the column's dropdown, and the first one chosen is refused by the
+      // database type ("a value was not valid for its column type", 400) — so no record of the
+      // entity can be created from the form, or by a suite that picks the declared values.
+      if (key === "enum" && enumNames.has(value.trim())) {
+        const entity = this.model.entities.find((e) => e.name === entityName);
+        const attr = entity?.attributes.find((a) => a.name === attrName);
+        const declared = this.model.enums.find((e) => e.name === value.trim());
+        const wordsOnly = declared?.values.some((v) => !/^-?\d+(\.\d+)?$/.test(v.trim()));
+        if (
+          attr &&
+          wordsOnly &&
+          !["string", "text", "uuid"].includes(String(attr.type).toLowerCase())
+        ) {
+          this.warn(
+            "EML515",
+            `Column "${entityName}.${attrName}" is ${attr.rawType} but is bound to enum "${value.trim()}", whose values are words — choosing one is refused (400).`,
+            {
+              line: lineNo,
+              hint: `Declare the column as string, or bind an enum of numbers. If ${attrName} is a ranking, keep it string and let the enum order it.`,
+            }
+          );
+        }
+      }
+
       // EML145: min/max values should be numeric
       if ((key === "min" || key === "max") && Number.isNaN(Number(value.trim()))) {
         this.warn(
