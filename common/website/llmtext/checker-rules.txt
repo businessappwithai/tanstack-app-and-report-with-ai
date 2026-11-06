@@ -327,6 +327,7 @@ mechanical faults the checker catches by reading, which a human eye slides past:
 | Every `%%rbac` / `%%rule` / `%%workflow` / `%%hook` / `%%step` names a declared entity | `EML213` `EML251` `EML242` `EML202` `EML266` |
 | Every `%%rbac` target is a CRUD operation or a move the entity's flow draws — its event, `from->to`, or `reopen` | `EML214` |
 | No rule and saga move a record its buttons move, every value a saga writes is a state the machine draws, `final` and `error` are not state names, and a move no `%%rbac` line names is listed | `EML512` `EML508` `EML509` `EML511` |
+| No state machine ends the diagram at the state a record starts in (`draft --> [*]` beside `[*] --> draft`): every `x --> [*]` state is Final and locked, so every record would be locked as soon as it is saved | `EML513` |
 | No `%%section` row places the state field — it is shown read-only in the form's header and always in the list grid | `EML178` |
 | A cross-entity step's `targetField` is a column of the target entity; a child reaching its parent uses `targetSource: <fk>` | `EML275` |
 | Every `kind: saga` marked `trigger: rule` is named by some `%%action` | `EML286` |

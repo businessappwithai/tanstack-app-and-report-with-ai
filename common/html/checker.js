@@ -653,6 +653,7 @@ var appwithai_language_default = {
       EML154: "warning — a %%category with no `name:` key. category.parser.ts requires one and skips the line without it, so the whole grouping is silently lost and its entities fall into the default General category.",
       EML500: "A `kind: state` workflow bound to an entity with no status/state/stage column at all - the machine has nothing to track.",
       EML275: "error — a cross-entity UpdateEntity/DeleteEntity step whose targetField is not a column of the target entity. targetField is matched on the target table against the triggering record's id; a child reaching its parent writes targetSource: <fk column> instead.",
+      EML513: "warning — a `kind: state` machine ends the diagram at its first state (`draft --> [*]` beside `[*] --> draft`). Every `x --> [*]` state is Final and a Final record is locked, so every record of the entity is locked as soon as it is saved: it can be neither edited nor deleted and moves on only by a button. Remove the `--> [*]` line; if a record may be discarded from the start state, draw a move to a state that ends the diagram instead.",
       EML509: "error — a `kind: state` machine draws a state named `final` or `error`. The record lifecycle reserves both as stored values: Final is every state the diagram ends, and Error is where a record whose Draft workflows failed goes. Compared exactly, so a `FINAL` status is an ordinary state.",
       EML511: "info — a move the state diagram draws that no %%rbac line names. It is open to anyone who may update the entity, and the administrator; reported once per machine, listing the moves, so the choice is a visible one.",
       EML512: "warning — a move rule (`<Entity>StateProgress`) or move saga (`<Entity><State>Move`) left from before action buttons: the saga only writes the state field and clears `_at` columns, the rule only starts such sagas. A button makes the move now, so they would move the record a second time. Auto-fixable: the section is removed and the `<state>_at` help rewritten (language/move-facts.ts).",
@@ -5086,6 +5087,19 @@ class CheckEngine {
         this.error("EML509", `State workflow "${wf.name}" draws a state named "${state}", which the record lifecycle reserves.`, {
           line: this.src.findLine(new RegExp(`^\\s*(?:\\w+\\s*-->\\s*)?${state}\\b`)),
           hint: `Rename it (e.g. ${state === "final" ? "completed" : "failed"}). Every state that ends the diagram (x --> [*]) is already Final, and Error is where a record whose workflows failed goes.`
+        });
+      }
+    }
+    for (const wf of this.model.workflows) {
+      if (wf.kind !== "state" || !wf.entity)
+        continue;
+      const initial = new Set(wf.transitions.filter((t) => t.from === "[*]").map((t) => t.to));
+      for (const state of initial) {
+        if (!wf.transitions.some((t) => t.from === state && t.to === "[*]"))
+          continue;
+        this.warn("EML513", `State workflow "${wf.name}" ends the diagram at its first state "${state}" (${state} --> [*]): every ${wf.entity} is Final and locked as soon as it is saved.`, {
+          line: this.src.findLine(new RegExp(`^\\s*${state}\\s*-->\\s*\\[\\*\\]`)),
+          hint: `Remove  ${state} --> [*] . A start state a record may leave is not an end state; if a record can be discarded from it, say so with a move to a state that ends the diagram (e.g. ${state} --> discarded).`
         });
       }
     }

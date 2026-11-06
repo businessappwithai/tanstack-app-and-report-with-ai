@@ -3832,6 +3832,27 @@ class CheckEngine {
       }
     }
 
+    // EML513: a machine that ends at the state a record starts in. Every `x --> [*]` state is
+    // Final, and a Final record is locked — so every record of the entity is locked the moment it is
+    // saved, can be neither edited nor deleted, and moves on only by a button. The education model
+    // drew `draft --> [*]` ("a draft may be discarded") beside `draft --> active`; every consent
+    // record and support plan was then uneditable from creation.
+    for (const wf of this.model.workflows) {
+      if (wf.kind !== "state" || !wf.entity) continue;
+      const initial = new Set(wf.transitions.filter((t) => t.from === "[*]").map((t) => t.to));
+      for (const state of initial) {
+        if (!wf.transitions.some((t) => t.from === state && t.to === "[*]")) continue;
+        this.warn(
+          "EML513",
+          `State workflow "${wf.name}" ends the diagram at its first state "${state}" (${state} --> [*]): every ${wf.entity} is Final and locked as soon as it is saved.`,
+          {
+            line: this.src.findLine(new RegExp(`^\\s*${state}\\s*-->\\s*\\[\\*\\]`)),
+            hint: `Remove  ${state} --> [*] . A start state a record may leave is not an end state; if a record can be discarded from it, say so with a move to a state that ends the diagram (e.g. ${state} --> discarded).`,
+          }
+        );
+      }
+    }
+
     // EML512: a rule and saga pair that moves a record when a person records the
     // time of a move. A button is the move now, so these would move the record a
     // second time behind it. The fixer removes them (language/move-facts.ts).
