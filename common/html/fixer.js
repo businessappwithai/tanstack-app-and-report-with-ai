@@ -655,6 +655,7 @@ var appwithai_language_default = {
       EML500: "A `kind: state` workflow bound to an entity with no status/state/stage column at all - the machine has nothing to track.",
       EML275: "error — a cross-entity UpdateEntity/DeleteEntity step whose targetField is not a column of the target entity. targetField is matched on the target table against the triggering record's id; a child reaching its parent writes targetSource: <fk column> instead.",
       EML513: "warning — a `kind: state` machine ends the diagram at its first state (`draft --> [*]` beside `[*] --> draft`). Every `x --> [*]` state is Final and a Final record is locked, so every record of the entity is locked as soon as it is saved: it can be neither edited nor deleted and moves on only by a button. Remove the `--> [*]` line; if a record may be discarded from the start state, draw a move to a state that ends the diagram instead.",
+      EML514: "warning — a `CreateEntity` step inserts exactly the columns its `fields` map names, and nothing fills a required reference (an FK not marked OPTIONAL) it leaves out. The insert is refused with a NOT NULL violation, the process fails and, when a rule starts it, so does the save that triggered it. Add the column to `fields` (a column of the triggering record, or a variable an earlier step published with `as:`), or mark it OPTIONAL in the erDiagram.",
       EML509: "error — a `kind: state` machine draws a state named `final` or `error`. The record lifecycle reserves both as stored values: Final is every state the diagram ends, and Error is where a record whose Draft workflows failed goes. Compared exactly, so a `FINAL` status is an ordinary state.",
       EML511: "info — a move the state diagram draws that no %%rbac line names. It is open to anyone who may update the entity, and the administrator; reported once per machine, listing the moves, so the choice is a visible one.",
       EML512: "warning — a move rule (`<Entity>StateProgress`) or move saga (`<Entity><State>Move`) left from before action buttons: the saga only writes the state field and clears `_at` columns, the rule only starts such sagas. A button makes the move now, so they would move the record a second time. Auto-fixable: the section is removed and the `<state>_at` help rewritten (language/move-facts.ts).",
@@ -4575,6 +4576,31 @@ class CheckEngine {
               line: lineNo,
               hint: '`fields` must be a JSON object and the last key on the line, e.g. fields: {"status":"open"}.'
             });
+          }
+        }
+        if (typeName === "CreateEntity" && has("fields") && entityProp) {
+          let named;
+          try {
+            const parsed = JSON.parse(props.fields);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              named = new Set(Object.keys(parsed).map((key) => key.trim()));
+            }
+          } catch {
+            named = undefined;
+          }
+          const wanted = entityProp.toLowerCase().replace(/^bus_/, "");
+          const target = this.model.entities.find((entity) => {
+            const snake = entity.name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/-/g, "_").toLowerCase();
+            return entity.name.toLowerCase() === wanted || snake === wanted;
+          });
+          if (named && target) {
+            const missing = target.attributes.filter((attribute) => attribute.required && attribute.isForeignKey && !attribute.isPrimaryKey && !named.has(attribute.name)).map((attribute) => attribute.name);
+            if (missing.length > 0) {
+              this.warn("EML514", `%%step ${nodeId} (CreateEntity ${target.name}) leaves required reference${missing.length > 1 ? "s" : ""} ${missing.join(", ")} unset, so the insert is refused.`, {
+                line: lineNo,
+                hint: `Add ${missing.map((name) => `"${name}"`).join(", ")} to fields (a column of the triggering record, or a variable an earlier CreateEntity published with as:), or mark the column OPTIONAL in the erDiagram.`
+              });
+            }
           }
         }
         if (typeName === "Decision" && has("decisionTable")) {
