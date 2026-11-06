@@ -464,7 +464,7 @@ Alongside the file — in the reply, never inside it — give:
 | **The checker result** | Errors, warnings and infos, with counts | The same, for the model as received *and* as delivered |
 | **The dictionary and reporting** | Zero of the nine dictionary codes and neither of `EML298`, `EML299`, and the audit's last line | The same, plus every dictionary gap of the original you filled — sections included |
 | **What is open** | Assumptions and unresolved forks | Assumptions, forks, and any pre-existing diagnostic you left alone |
-| **What to do next** | Upload the file at `https://www.appwithai.org/guide/run-in-browser.html#upload`, where it becomes a running application in the browser tab, or open it in `https://www.appwithai.org/viewers/` to see every rule, workflow and form | Same |
+| **What to do next** | Upload the file at `https://www.appwithai.org/guide/run-in-browser.html#upload`, where it becomes a running application in the browser tab, or open it in `https://www.appwithai.org/viewers/` to see every rule, workflow and form. The downloadable archive tests itself on demand: `docker compose run --rm e2e` runs a suite derived from the model against the application and its reporting platform together | Same |
 
 **Completion status** — say which, in one line at the end:
 
