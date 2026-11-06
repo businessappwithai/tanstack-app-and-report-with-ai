@@ -24,7 +24,7 @@
       "repository": "businessappwithai/app-with-ai-tanstack",
       "path": "app-with-ai-tanstack",
       "branch": "main",
-      "ref": "65ba2e1dbfbade9375b23e28b0813ed59aba46c0",
+      "ref": "df253d9a01bc9e1c3a578904f17cd07de6f95247",
       "install": true,
       "needed_for": [
         "language/cli/src/generate/jdm.ts imports packages/web/src/lib/jdm-converter.ts and mermaid-flowchart-parser.ts across the repository boundary, on every generation path — so every --stack target needs this checkout, not just the heavy one",
