@@ -586,7 +586,7 @@ any value containing a `key:` sequence.
 |---|---|---|---|
 | `trigger-workflow` | `workflow` | `message` | Starts that workflow by name. This is what gates a `kind: saga` declared `trigger: rule`. |
 | `validation-error` | `message` | — | Rejects the write and returns the message to the caller. |
-| `transform` | `field`, `value` | `message` | Overwrites a column on the record being written. |
+| `transform` | `field`, `value` | `message` | Overwrites a column on the record being written. `value` is a literal, or plain arithmetic over the record's own columns (`quantity * unit_price`, `net_amount + tax_amount`; numbers, column names, `+ - * / %`, parentheses), computed when the rule runs and in the order the actions are written, so a later transform sees an earlier one's result. |
 
 ```
 %%action escalateDiscount trigger-workflow when: discount_percent > 15 workflow: QuoteApprovalEscalation message: Discount above rep authority — holding the quote for approval
