@@ -270,6 +270,9 @@ function sagaPropsFromAutomation(
   return out;
 }
 
+/** Pages the generated frontend owns, by route name. An entity may not take one. */
+const RESERVED_PAGE_NAMES = new Set(["admin", "api", "auth", "dashboard", "index", "login"]);
+
 const PERSON_ROLE_COLUMN_NAMES = new Set([
   "assigned_to",
   "author_id",
@@ -597,6 +600,22 @@ class CheckEngine {
           line: entityLine,
           hint: "The generator will auto-add  string id PK  if no id is present.",
         });
+      }
+
+      // EML516: an entity named like one of the application's own pages. The generator
+      // writes each entity's list page to a route named after it, so `Dashboard` replaces the
+      // application's home dashboard (the page that shows every category) with that entity's
+      // grid, and `Login`, `Admin`, `Api` and `Auth` replace sign-in, administration and the
+      // proxy routes. The application still builds and runs; it just has no way in.
+      if (RESERVED_PAGE_NAMES.has(entity.name.toLowerCase())) {
+        this.warn(
+          "EML516",
+          `Entity "${entity.name}" is named like a page of the generated application (/${entity.name.toLowerCase()}), and its list page would replace that page.`,
+          {
+            line: entityLine,
+            hint: `Rename it (for example Institution${entity.name}) and the columns that point at it (institution_${entity.name.toLowerCase()}_id). The reserved names are ${[...RESERVED_PAGE_NAMES].join(", ")}.`,
+          }
+        );
       }
 
       this.checkAttributes(entity, entityLine);
