@@ -101,11 +101,14 @@ seeder, then signs in to the *platform* as each reporting role and holds it to
 name, every dashboard widget, every report and chart actually run, and each
 role let in to a report exactly when its tables admit the query. It also writes
 records through the application and asserts the platform's register report for
-that entity sees them. Two consequences for an author: a model whose `%%rbac`
+that entity sees them. Three consequences for an author: a model whose `%%rbac`
 leaves a role no entity to read gives that role an empty `tables` list — which
-means *every* table only for the administrator, and *none* for anyone else — and
-a report the platform's SQL analyser cannot parse is refused even to the
-administrator, so keep authored `%%report` SQL to plain `SELECT … FROM … JOIN`.
+means *every* table only for the administrator, and *none* for anyone else; a
+functional role you call `admin` or `administrator` appears on the reporting side
+as `<Name> (model role)`, because the platform reads those two names as its own
+system administrator whatever the role was given; and a report the platform's SQL
+analyser cannot parse is refused even to the administrator, so keep authored
+`%%report` SQL to plain `SELECT … FROM … JOIN`.
 
 ### 7.2 Reporting coverage — mandatory, and it is the whole domain
 
