@@ -330,6 +330,7 @@ mechanical faults the checker catches by reading, which a human eye slides past:
 | No state machine ends the diagram at the state a record starts in (`draft --> [*]` beside `[*] --> draft`): every `x --> [*]` state is Final and locked, so every record would be locked as soon as it is saved | `EML513` |
 | A `CreateEntity` step names every required reference (an FK not marked OPTIONAL) of the entity it creates — nothing fills one it leaves out, so the insert is refused | `EML514` |
 | A column bound to an `%%enum` of words is declared `string` — an integer, decimal, boolean or date column refuses the first value the dropdown offers | `EML515` |
+| No entity is named `Dashboard`, `Login`, `Admin`, `Api`, `Auth` or `Index` — its list page would replace the application's own page of that name | `EML516` |
 | No `%%section` row places the state field — it is shown read-only in the form's header and always in the list grid | `EML178` |
 | A cross-entity step's `targetField` is a column of the target entity; a child reaching its parent uses `targetSource: <fk>` | `EML275` |
 | Every `kind: saga` marked `trigger: rule` is named by some `%%action` | `EML286` |
