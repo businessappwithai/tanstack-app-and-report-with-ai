@@ -655,6 +655,7 @@ var appwithai_language_default = {
       EML275: "error — a cross-entity UpdateEntity/DeleteEntity step whose targetField is not a column of the target entity. targetField is matched on the target table against the triggering record's id; a child reaching its parent writes targetSource: <fk column> instead.",
       EML513: "warning — a `kind: state` machine ends the diagram at its first state (`draft --> [*]` beside `[*] --> draft`). Every `x --> [*]` state is Final and a Final record is locked, so every record of the entity is locked as soon as it is saved: it can be neither edited nor deleted and moves on only by a button. Remove the `--> [*]` line; if a record may be discarded from the start state, draw a move to a state that ends the diagram instead.",
       EML514: "warning — a `CreateEntity` step inserts exactly the columns its `fields` map names, and nothing fills a required reference (an FK not marked OPTIONAL) it leaves out. The insert is refused with a NOT NULL violation, the process fails and, when a rule starts it, so does the save that triggered it. Add the column to `fields` (a column of the triggering record, or a variable an earlier step published with `as:`), or mark it OPTIONAL in the erDiagram.",
+      EML515: "warning — a column bound to a `%%enum` of words (`%%field E.c enum: X`) is declared integer, decimal, boolean or a date. The dictionary offers the enum's values as the column's dropdown, the database type refuses the first one chosen (400, \"a value was not valid for its column type\"), and no record of the entity can be created from its form. Declare the column string, or drop the binding if the column is a number.",
       EML509: "error — a `kind: state` machine draws a state named `final` or `error`. The record lifecycle reserves both as stored values: Final is every state the diagram ends, and Error is where a record whose Draft workflows failed goes. Compared exactly, so a `FINAL` status is an ordinary state.",
       EML511: "info — a move the state diagram draws that no %%rbac line names. It is open to anyone who may update the entity, and the administrator; reported once per machine, listing the moves, so the choice is a visible one.",
       EML512: "warning — a move rule (`<Entity>StateProgress`) or move saga (`<Entity><State>Move`) left from before action buttons: the saga only writes the state field and clears `_at` columns, the rule only starts such sagas. A button makes the move now, so they would move the record a second time. Auto-fixable: the section is removed and the `<state>_at` help rewritten (language/move-facts.ts).",
@@ -3455,6 +3456,18 @@ class CheckEngine {
           line: lineNo,
           hint: `Add  %%enum ${value.trim()}: value1, value2  before the erDiagram block.`
         });
+      }
+      if (key === "enum" && enumNames.has(value.trim())) {
+        const entity = this.model.entities.find((e) => e.name === entityName);
+        const attr = entity?.attributes.find((a) => a.name === attrName);
+        const declared = this.model.enums.find((e) => e.name === value.trim());
+        const wordsOnly = declared?.values.some((v) => !/^-?\d+(\.\d+)?$/.test(v.trim()));
+        if (attr && wordsOnly && !["string", "text", "uuid"].includes(String(attr.type).toLowerCase())) {
+          this.warn("EML515", `Column "${entityName}.${attrName}" is ${attr.rawType} but is bound to enum "${value.trim()}", whose values are words — choosing one is refused (400).`, {
+            line: lineNo,
+            hint: `Declare the column as string, or bind an enum of numbers. If ${attrName} is a ranking, keep it string and let the enum order it.`
+          });
+        }
       }
       if ((key === "min" || key === "max") && Number.isNaN(Number(value.trim()))) {
         this.warn("EML145", `%%field "${entityName}.${attrName}" has non-numeric ${key}: "${value.trim()}".`, {

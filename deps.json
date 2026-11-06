@@ -24,7 +24,7 @@
       "repository": "businessappwithai/app-with-ai-tanstack",
       "path": "app-with-ai-tanstack",
       "branch": "main",
-      "ref": "f8b68d2b5896dc4684f0ebfd17a36e4ea493a810",
+      "ref": "d3d37bc6e4dded67f40ffc3dfb192b99bc23b6c3",
       "install": true,
       "needed_for": [
         "language/cli/src/generate/jdm.ts imports packages/web/src/lib/jdm-converter.ts and mermaid-flowchart-parser.ts across the repository boundary, on every generation path — so every --stack target needs this checkout, not just the heavy one",
@@ -39,7 +39,7 @@
       "repository": "businessappwithai/enterprise_reporting_tanstack",
       "path": "enterprise_reporting_tanstack",
       "branch": "main",
-      "ref": "0d433e75f0968b66ff269ea251027deb7467dc9b",
+      "ref": "43ab1901bf2f20bf6cd34790b62355e7fc9b297a",
       "install": false,
       "install_note": "Nothing local reads this checkout's node_modules — it is a Docker build context, and the image build runs its own install inside the image, so `./deps.sh --install` skips it.",
       "needed_for": [
