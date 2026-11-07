@@ -436,9 +436,9 @@ var appwithai_language_default = {
     displayValue: {
       description: "What a record is called wherever something other than the record shows it: a Table Direct dropdown, and a grid cell holding a foreign key. Stored as sys_column.is_identifier, and the display value is the identifier columns concatenated in seq_no order - the same rule in both stacks.",
       derivation: [
-        "1. A column named name, full_name, display_name, title, label or subject - whichever appears first in that order.",
+        "1. A column named name, full_name, display_name, title, label or subject - whichever appears first in that order - or, failing those, the entity's own <entity>_name, <entity>_title or <entity>_label (department_name on Department, key department_id). Never a reference, never an enum column.",
         "2. Otherwise first_name and last_name together, if the entity declares both. This is why the value is a concatenation and not one column.",
-        "3. Otherwise code, reference or number - not a name, but what people quote at each other, and better than a uuid.",
+        "3. Otherwise code, reference or number, or the entity's own <entity>_code, <entity>_reference or <entity>_number - not a name, but what people quote at each other, and better than a uuid.",
         "4. Otherwise, if the entity declares two or more FK columns ending _id/_by, it is a join entity: its first two references are the identifiers, each resolved through the parent's own label. CampaignMember reads as `Spring Promo - Omar Kowalski`.",
         "5. Otherwise the first declared string/text column that is neither the key nor a reference.",
         "6. Otherwise the key, so a lookup still lists something."

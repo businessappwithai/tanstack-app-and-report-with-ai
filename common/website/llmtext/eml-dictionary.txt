@@ -125,8 +125,9 @@ the lookup dropdown and the grid cell. The dictionary decides what a record is
 | What the referenced entity declares | What a reference to it shows |
 |---|---|
 | `name` — or `full_name`, `display_name`, `title`, `label`, `subject` | that column |
+| the entity's own `<entity>_name` (or `_title`, `_label`) — `department_name` on `Department` | that column |
 | `first_name` **and** `last_name` | both, joined — `Omar Kowalski` |
-| `code`, `reference` or `number` | that column — `CON2026-0001` |
+| `code`, `reference` or `number` — or the entity's own `<entity>_code`, `_reference`, `_number` | that column — `CON2026-0001` |
 | **two or more `FK` columns and no name of its own** | its first two parents, resolved and joined — `Spring Promo — Omar Kowalski` |
 | none of those | the first plain `string`/`text` column you declared |
 | no text column at all | the uuid — the outcome to avoid |
