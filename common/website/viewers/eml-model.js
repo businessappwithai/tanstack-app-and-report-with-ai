@@ -650,6 +650,10 @@ var appwithai_language_default = {
       EML154: "warning — a %%category with no `name:` key. category.parser.ts requires one and skips the line without it, so the whole grouping is silently lost and its entities fall into the default General category.",
       EML500: "A `kind: state` workflow bound to an entity with no status/state/stage column at all - the machine has nothing to track.",
       EML275: "error — a cross-entity UpdateEntity/DeleteEntity step whose targetField is not a column of the target entity. targetField is matched on the target table against the triggering record's id; a child reaching its parent writes targetSource: <fk column> instead.",
+      EML513: "warning — a `kind: state` machine ends the diagram at its first state (`draft --> [*]` beside `[*] --> draft`). Every `x --> [*]` state is Final and a Final record is locked, so every record of the entity is locked as soon as it is saved: it can be neither edited nor deleted and moves on only by a button. Remove the `--> [*]` line; if a record may be discarded from the start state, draw a move to a state that ends the diagram instead.",
+      EML514: "warning — a `CreateEntity` step inserts exactly the columns its `fields` map names, and nothing fills a required reference (an FK not marked OPTIONAL) it leaves out. The insert is refused with a NOT NULL violation, the process fails and, when a rule starts it, so does the save that triggered it. Add the column to `fields` (a column of the triggering record, or a variable an earlier step published with `as:`), or mark it OPTIONAL in the erDiagram.",
+      EML515: "warning — a column bound to a `%%enum` of words (`%%field E.c enum: X`) is declared integer, decimal, boolean or a date. The dictionary offers the enum's values as the column's dropdown, the database type refuses the first one chosen (400, \"a value was not valid for its column type\"), and no record of the entity can be created from its form. Declare the column string, or drop the binding if the column is a number.",
+      EML516: "warning — an entity is named like a page of the generated application (`Dashboard`, `Login`, `Admin`, `Api`, `Auth`, `Index`). Each entity's list page is written to a route named after it, so the entity's grid replaces that page: `Dashboard` replaces the home dashboard that lists every category, so the application has no way to its screens. Rename the entity and the columns that point at it.",
       EML509: "error — a `kind: state` machine draws a state named `final` or `error`. The record lifecycle reserves both as stored values: Final is every state the diagram ends, and Error is where a record whose Draft workflows failed goes. Compared exactly, so a `FINAL` status is an ordinary state.",
       EML511: "info — a move the state diagram draws that no %%rbac line names. It is open to anyone who may update the entity, and the administrator; reported once per machine, listing the moves, so the choice is a visible one.",
       EML512: "warning — a move rule (`<Entity>StateProgress`) or move saga (`<Entity><State>Move`) left from before action buttons: the saga only writes the state field and clears `_at` columns, the rule only starts such sagas. A button makes the move now, so they would move the record a second time. Auto-fixable: the section is removed and the `<state>_at` help rewritten (language/move-facts.ts).",
@@ -1639,6 +1643,32 @@ var appwithai_language_default = {
       ],
       signIn: "Two applications, two sign-ins, never merged. The application's account for a role is <role>@<app>.example.com and the reporting account is <role>@<app>.reports.example.com; the administrator is admin@admin.com on both sides, as two different accounts in two different user tables. Neither password works on the other side. A role in the application decides what a user may do to a record; a reporting role decides which tables their queries may read. Only read rules narrow a reporting role.",
       verification: "The checker holds %%report to its shape (EML290-EML296), %%dashboard to its shape (EML297) and every declared role to the reporting minimums (EML298, EML299), and cannot see whether a column exists. common/scripts/check-reporting-pack.ts in app-and-report-with-ai-tanstack runs every derived and authored query against a schema the generator actually emitted."
+    },
+    generatedE2E: {
+      description: "Every generated application carries an end-to-end suite that is derived from the same model and runs on demand from its docker-compose.yml. Nothing in it is written by hand per application: the generator (packages/generator/src/generators/tests/bun-e2e.generator.ts) renders the tests/ project from the parsed model, and the reporting suites read the same reporting-pack.json the seeder loaded.",
+      command: "docker compose run --rm e2e",
+      browserCommand: "docker compose run --rm e2e-ui — the same suite's browser layer: Playwright and Chromium drive the front end, the rules and workflows editor, a record's action buttons and the reporting platform's dashboards.",
+      service: "An 'e2e' service behind the 'test' profile (so 'docker compose up' never starts it), built from tests/Dockerfile. It waits for the backend and the reporting platform to be healthy, the front end to have started and the report-seeder to have exited 0, then attaches over the compose network. Results are written to ./test-results. It is generated only when the tests/ project is.",
+      scripts: {
+        "test:attach": "every suite (the default)",
+        "test:crud": "the per-entity CRUD suites",
+        "test:rules": "the per-entity business-rule suites",
+        "test:workflows": "the workflow suites",
+        "test:status": "action buttons per role (suite 26)",
+        "test:reporting": "the reporting platform against the pack (suite 28)",
+        "test:together": "the application and the platform on one set of data (suite 29)",
+        "test:ui": "the browser layer (the e2e-ui service)"
+      },
+      derivedFrom: [
+        { declares: "an entity", yields: "CRUD, listing, filtering, sorting, pagination, optimistic locking and validation suites for it" },
+        { declares: "%%rule or %%action", yields: "per-entity rule suites: a refusing rule refuses, a transform transforms, a trigger-workflow starts its process" },
+        { declares: "%%workflow or %%step", yields: "workflow-run, multi-step and status-bound workflow suites (a failing ENTER:<state> workflow leaves the typed values saved and the status unmoved)" },
+        { declares: "a state diagram", yields: "every drawn edge walked, every undrawn one refused, an end state locked, and the action buttons each role is offered" },
+        { declares: "%%rbac", yields: "one sign-in per declared role, driven against every restricted operation and every move a role is given" },
+        { declares: "%%report and %%dashboard, and every derived report", yields: "the reporting platform held to the pack: every report, chart and dashboard present by name, every widget, every report and chart run, and each role let in exactly when its tables admit the query" }
+      ],
+      reportingTables: "In the pack, an empty 'tables' list means every table for the administrator only. For any other role it means %%rbac left that role no entity to read, and the platform correctly refuses it every report.",
+      needs: "A reporting pack (the reporting suites skip themselves loudly without one) and the tests/ project (--skip-tests omits both the project and the service)."
     },
     pipeline: [
       "1. ERD section -> MermaidParser -> Entity[] + Relationship[] -> migrations, DTOs, services, controllers, forms, tables. The same pass reads %%index into entity.indexes and %%enum / %%field enum: into bound enums.",
@@ -3087,6 +3117,7 @@ function sagaPropsFromAutomation(type, props) {
   }
   return out;
 }
+var RESERVED_PAGE_NAMES = new Set(["admin", "api", "auth", "dashboard", "index", "login"]);
 var PERSON_ROLE_COLUMN_NAMES = new Set([
   "assigned_to",
   "author_id",
@@ -3292,6 +3323,12 @@ class CheckEngine {
         this.warn("EML102", `Entity "${entity.name}" has no attributes.`, {
           line: entityLine,
           hint: "The generator will auto-add  string id PK  if no id is present."
+        });
+      }
+      if (RESERVED_PAGE_NAMES.has(entity.name.toLowerCase())) {
+        this.warn("EML516", `Entity "${entity.name}" is named like a page of the generated application (/${entity.name.toLowerCase()}), and its list page would replace that page.`, {
+          line: entityLine,
+          hint: `Rename it (for example Institution${entity.name}) and the columns that point at it (institution_${entity.name.toLowerCase()}_id). The reserved names are ${[...RESERVED_PAGE_NAMES].join(", ")}.`
         });
       }
       this.checkAttributes(entity, entityLine);
@@ -3588,6 +3625,18 @@ class CheckEngine {
           line: lineNo,
           hint: `Add  %%enum ${value.trim()}: value1, value2  before the erDiagram block.`
         });
+      }
+      if (key === "enum" && enumNames.has(value.trim())) {
+        const entity = this.model.entities.find((e) => e.name === entityName);
+        const attr = entity?.attributes.find((a) => a.name === attrName);
+        const declared = this.model.enums.find((e) => e.name === value.trim());
+        const wordsOnly = declared?.values.some((v) => !/^-?\d+(\.\d+)?$/.test(v.trim()));
+        if (attr && wordsOnly && !["string", "text", "uuid"].includes(String(attr.type).toLowerCase())) {
+          this.warn("EML515", `Column "${entityName}.${attrName}" is ${attr.rawType} but is bound to enum "${value.trim()}", whose values are words — choosing one is refused (400).`, {
+            line: lineNo,
+            hint: `Declare the column as string, or bind an enum of numbers. If ${attrName} is a ranking, keep it string and let the enum order it.`
+          });
+        }
       }
       if ((key === "min" || key === "max") && Number.isNaN(Number(value.trim()))) {
         this.warn("EML145", `%%field "${entityName}.${attrName}" has non-numeric ${key}: "${value.trim()}".`, {
@@ -4690,6 +4739,31 @@ class CheckEngine {
             });
           }
         }
+        if (typeName === "CreateEntity" && has("fields") && entityProp) {
+          let named;
+          try {
+            const parsed = JSON.parse(props.fields);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              named = new Set(Object.keys(parsed).map((key) => key.trim()));
+            }
+          } catch {
+            named = undefined;
+          }
+          const wanted = entityProp.toLowerCase().replace(/^bus_/, "");
+          const target = this.model.entities.find((entity) => {
+            const snake = entity.name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/-/g, "_").toLowerCase();
+            return entity.name.toLowerCase() === wanted || snake === wanted;
+          });
+          if (named && target) {
+            const missing = target.attributes.filter((attribute) => attribute.required && attribute.isForeignKey && !attribute.isPrimaryKey && !named.has(attribute.name)).map((attribute) => attribute.name);
+            if (missing.length > 0) {
+              this.warn("EML514", `%%step ${nodeId} (CreateEntity ${target.name}) leaves required reference${missing.length > 1 ? "s" : ""} ${missing.join(", ")} unset, so the insert is refused.`, {
+                line: lineNo,
+                hint: `Add ${missing.map((name) => `"${name}"`).join(", ")} to fields (a column of the triggering record, or a variable an earlier CreateEntity published with as:), or mark the column OPTIONAL in the erDiagram.`
+              });
+            }
+          }
+        }
         if (typeName === "Decision" && has("decisionTable")) {
           try {
             const table = JSON.parse(props.decisionTable);
@@ -5221,6 +5295,19 @@ class CheckEngine {
         this.error("EML509", `State workflow "${wf.name}" draws a state named "${state}", which the record lifecycle reserves.`, {
           line: this.src.findLine(new RegExp(`^\\s*(?:\\w+\\s*-->\\s*)?${state}\\b`)),
           hint: `Rename it (e.g. ${state === "final" ? "completed" : "failed"}). Every state that ends the diagram (x --> [*]) is already Final, and Error is where a record whose workflows failed goes.`
+        });
+      }
+    }
+    for (const wf of this.model.workflows) {
+      if (wf.kind !== "state" || !wf.entity)
+        continue;
+      const initial = new Set(wf.transitions.filter((t) => t.from === "[*]").map((t) => t.to));
+      for (const state of initial) {
+        if (!wf.transitions.some((t) => t.from === state && t.to === "[*]"))
+          continue;
+        this.warn("EML513", `State workflow "${wf.name}" ends the diagram at its first state "${state}" (${state} --> [*]): every ${wf.entity} is Final and locked as soon as it is saved.`, {
+          line: this.src.findLine(new RegExp(`^\\s*${state}\\s*-->\\s*\\[\\*\\]`)),
+          hint: `Remove  ${state} --> [*] . A start state a record may leave is not an end state; if a record can be discarded from it, say so with a move to a state that ends the diagram (e.g. ${state} --> discarded).`
         });
       }
     }
