@@ -587,6 +587,17 @@ failure looks like a broken data source rather than a rotated key. Writing
 way to inject configuration — it keeps what it finds and rewrites only the block
 it derives from the run. `build-and-run.yml` uses exactly that.
 
+### Logging, errors and tracing — the products' own, passed through
+
+Both products log by declared event and classify every error by category now; the design is each
+product's `docs/errorhandlingandlogging.md`, and none of it lives here. Two things reach this
+repository. The generated application's administrator can change a channel's level at runtime and
+it survives a restart (its migration `025_log_level_overrides`); the platform does the same at
+`/api/admin/log-levels`. And the `report` service passes `OTEL_EXPORTER_OTLP_ENDPOINT` and
+`OTEL_SERVICE_NAME` through from `.env`: empty, the default, exports nothing; set to an OTLP/HTTP
+collector, each API request is a span whose ids are on its log lines. No collector is started here —
+the platform's own compose file has an `observability` profile for that.
+
 ### The two profiles
 
 - **`demo`** (default) — one `apache/age:PG16` holding three databases: the

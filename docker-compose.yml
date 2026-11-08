@@ -209,6 +209,10 @@ services:
       LLAMA_REASONING_URL: ${LLAMA_REASONING_URL:-}
       LLAMA_EMBEDDING_URL: ${LLAMA_EMBEDDING_URL:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Tracing: empty exports nothing. Point it at an OTLP/HTTP collector to get one span per
+      # API request, with the same trace and span ids on the platform's log lines.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-enterprise-reporting}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     expose:
