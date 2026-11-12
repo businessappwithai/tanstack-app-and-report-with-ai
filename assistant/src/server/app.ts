@@ -1,0 +1,253 @@
+/**
+ * The assistant's HTTP surface, as one `fetch` function.
+ *
+ * Everything is under the base path (`/chat`):
+ *
+ *   GET  /chat/healthz              liveness, no session
+ *   ALL  /chat/api/auth/*           the generated application's own sign-in, passed through
+ *   GET  /chat/api/session          who is signed in, and the administrator's two switches
+ *   POST /chat/api/tickets          exchange an intent for a single-use ticket
+ *   GET  /chat/open/<ticket>        redeem a ticket: redirect the frame to the real page
+ *   GET  /chat/api/audit            the audit trail (administrators)
+ *   ALL  /chat/api/copilotkit/*     the CopilotKit runtime
+ *   GET  /chat/*                    the built client
+ *
+ * Identity is the generated application's session cookie, which the browser
+ * sends because all three services share one origin. The assistant holds no
+ * password, no role table and no session of its own.
+ */
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import {
+  BuiltInAgent,
+  CopilotRuntime,
+  createCopilotRuntimeHandler,
+  InMemoryAgentRunner,
+} from "@copilotkit/runtime/v2";
+import type { AuditLog } from "./audit";
+import type { AssistantConfig } from "./config";
+import {
+  AppClient,
+  type ChatSwitches,
+  delegateReportSession,
+  type Person,
+  ReportClient,
+  type ReportSession,
+} from "./products";
+import { type Clients, NotAvailable, resolveIntent } from "./registry";
+import { signStatement } from "./signing";
+import type { Intent, TicketService } from "./tickets";
+import { buildTools, SYSTEM_PROMPT } from "./tools";
+
+export const EMBED_COOKIE = "chat_embed";
+
+export interface AssistantDeps {
+  config: AssistantConfig;
+  tickets: TicketService;
+  audit: AuditLog;
+  /** Serves the built client; absent in tests. */
+  serveClient?: (request: Request, path: string) => Promise<Response> | Response;
+  /** Replaces the language model; the tests pass a scripted one. */
+  model?: unknown;
+}
+
+interface Caller {
+  person: Person;
+  cookie: string;
+  switches: ChatSwitches;
+}
+
+const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", "cache-control": "no-store", ...headers },
+  });
+
+const NOT_AVAILABLE_PAGE = `<!doctype html><meta charset="utf-8"><title>Not available</title>
+<body style="font:15px system-ui;margin:3rem;color:#444">
+<p><strong>This page is not available.</strong></p>
+<p>The link has been used or has expired. Ask the assistant to open it again.</p>`;
+
+export function createAssistant(deps: AssistantDeps): (request: Request) => Promise<Response> {
+  const { config, tickets, audit } = deps;
+  const base = config.basePath;
+
+  // Short caches: a role taken away, or the feature switched off, takes effect within seconds.
+  const people = new Map<string, { until: number; caller: Caller | null }>();
+  const reportSessions = new Map<string, ReportSession>();
+
+  async function identify(request: Request): Promise<Caller | null> {
+    const cookie = request.headers.get("cookie") ?? "";
+    if (!cookie.includes("session_token")) return null;
+    const cached = people.get(cookie);
+    if (cached && cached.until > Date.now()) return cached.caller;
+    const app = new AppClient(config, cookie);
+    const person = await app.me();
+    const caller = person ? { person, cookie, switches: await app.switches() } : null;
+    people.set(cookie, { until: Date.now() + 15_000, caller });
+    if (people.size > 5000) people.clear();
+    return caller;
+  }
+
+  async function reportSession(person: Person): Promise<ReportSession> {
+    const cached = reportSessions.get(person.email);
+    if (cached && cached.expiresAt - 60_000 > Date.now()) return cached;
+    const session = await delegateReportSession(config, person);
+    reportSessions.set(person.email, session);
+    return session;
+  }
+
+  const clientsFor = (caller: Caller): Clients => ({
+    app: new AppClient(config, caller.cookie),
+    report: async () => new ReportClient(config, await reportSession(caller.person)),
+  });
+
+  const embedCookie = async (person: Person): Promise<string> => {
+    const value = await signStatement(
+      config.bridgeSecret,
+      { aud: "embed", sub: person.email },
+      config.embedTtlSeconds
+    );
+    const secure = config.publicOrigin.startsWith("https://") ? "; Secure" : "";
+    return `${EMBED_COOKIE}=${value}; Path=/; Max-Age=${config.embedTtlSeconds}; HttpOnly; SameSite=Lax${secure}`;
+  };
+
+  const model =
+    deps.model ??
+    createOpenAICompatible({
+      name: "local",
+      baseURL: config.ai.baseUrl,
+      apiKey: config.ai.apiKey,
+    }).chatModel(config.ai.model);
+
+  const runtime = new CopilotRuntime({
+    // Built per request, so the tools close over this person's own session.
+    agents: async ({ request }) => {
+      const caller = await identify(request);
+      if (!caller) throw new Error("Not signed in");
+      return {
+        default: new BuiltInAgent({
+          model: model as never,
+          prompt: `${SYSTEM_PROMPT}\n\nYou are talking to ${caller.person.name}. The application is called ${caller.switches.appName}.`,
+          maxSteps: 8,
+          tools: buildTools({ config, person: caller.person, clients: clientsFor(caller), audit }),
+        }),
+      };
+    },
+    // A conversation belongs to the person who started it; nobody else can list, read or continue it.
+    identifyUser: async (request) => {
+      const caller = await identify(request);
+      if (!caller) throw new Error("Not signed in");
+      return { id: caller.person.email, name: caller.person.name };
+    },
+    runner: new InMemoryAgentRunner(),
+  });
+  const copilot = createCopilotRuntimeHandler({ runtime, basePath: `${base}/api/copilotkit` });
+
+  /** The application's own Better Auth endpoints, so the assistant's sign-in form posts same-path. */
+  async function passAuthThrough(request: Request, rest: string, search: string): Promise<Response> {
+    const headers = new Headers(request.headers);
+    headers.delete("host");
+    headers.set("origin", config.publicOrigin);
+    const upstream = await fetch(`${config.appApiUrl}/api/auth/${rest}${search}`, {
+      method: request.method,
+      headers,
+      body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer(),
+      redirect: "manual",
+    });
+    const out = new Headers();
+    out.set("content-type", upstream.headers.get("content-type") ?? "application/json");
+    out.set("cache-control", "no-store");
+    for (const cookie of upstream.headers.getSetCookie()) out.append("set-cookie", cookie);
+    people.clear();
+    return new Response(upstream.body, { status: upstream.status, headers: out });
+  }
+
+  return async function handle(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname !== base && !url.pathname.startsWith(`${base}/`)) {
+      return new Response("Not found", { status: 404 });
+    }
+    const path = url.pathname.slice(base.length) || "/";
+
+    if (path === "/healthz") return json({ ok: true });
+
+    if (path.startsWith("/api/auth/")) {
+      return passAuthThrough(request, path.slice("/api/auth/".length), url.search);
+    }
+
+    if (path.startsWith("/open/")) {
+      const caller = await identify(request).catch(() => null);
+      const result = await tickets.redeem(path.slice("/open/".length), caller?.person.email ?? null);
+      const enabled = caller?.switches.enabled === true;
+      if (!result.ok || !caller || !enabled) {
+        return new Response(NOT_AVAILABLE_PAGE, {
+          status: 404,
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+        });
+      }
+      const headers = new Headers({
+        location: result.ticket.path,
+        "cache-control": "no-store",
+        "referrer-policy": "no-referrer",
+      });
+      headers.append("set-cookie", await embedCookie(caller.person));
+      if (result.ticket.intent.product === "report") {
+        // The reporting platform's own session, for this person, set by this origin.
+        const session = await reportSession(caller.person).catch(() => null);
+        for (const cookie of session?.setCookie ?? []) headers.append("set-cookie", cookie);
+      }
+      return new Response(null, { status: 302, headers });
+    }
+
+    if (path.startsWith("/api/")) {
+      let caller: Caller | null;
+      try {
+        caller = await identify(request);
+      } catch {
+        // "Could not check" is not "signed out": do not send anyone to the sign-in form for an outage.
+        return json({ error: "The application could not be reached." }, 503);
+      }
+      if (!caller) return json({ error: "Not signed in" }, 401);
+
+      if (path === "/api/session") {
+        return json(
+          {
+            user: { email: caller.person.email, name: caller.person.name, admin: caller.person.isMaster },
+            enabled: caller.switches.enabled,
+            chatOnly: caller.switches.chatOnly,
+            appName: caller.switches.appName,
+          },
+          200,
+          caller.switches.enabled ? { "set-cookie": await embedCookie(caller.person) } : {}
+        );
+      }
+
+      if (!caller.switches.enabled) return json({ error: "The assistant is switched off." }, 403);
+
+      if (path === "/api/tickets" && request.method === "POST") {
+        const intent = (await request.json().catch(() => null)) as Intent | null;
+        if (!intent || typeof intent !== "object") return json({ error: "Bad request" }, 400);
+        try {
+          const target = await resolveIntent(config, clientsFor(caller), intent);
+          const ticket = await tickets.issue(caller.person.email, intent, target);
+          return json({ ticket });
+        } catch (error) {
+          if (error instanceof NotAvailable) return json({ error: error.message }, 404);
+          return json({ error: "The system could not be reached." }, 503);
+        }
+      }
+
+      if (path === "/api/audit" && request.method === "GET") {
+        if (!caller.person.isMaster) return json({ error: "Administrators only" }, 403);
+        return json({ entries: await audit.recent(200) });
+      }
+
+      if (path.startsWith("/api/copilotkit")) return copilot(request);
+
+      return json({ error: "Not found" }, 404);
+    }
+
+    if (deps.serveClient) return deps.serveClient(request, path);
+    return new Response("Not found", { status: 404 });
+  };
+}
