@@ -9,6 +9,7 @@
  * Redeeming must be one step — find, check and spend together — or two frames
  * racing on one ticket both get in.
  */
+import type { AssistantDatabase } from "./database";
 import { randomToken } from "./signing";
 
 export type TargetProduct = "app" | "report";
@@ -59,6 +60,59 @@ export class MemoryTicketStore implements TicketStore {
     for (const [token, ticket] of this.tickets) {
       if (ticket.expiresAt <= now) this.tickets.delete(token);
     }
+  }
+}
+
+const TICKET_DDL = `CREATE TABLE IF NOT EXISTS chat_tickets (
+  token_hash TEXT PRIMARY KEY,
+  user_email TEXT NOT NULL,
+  intent JSONB NOT NULL,
+  path TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chat_tickets_expires ON chat_tickets (expires_at);`;
+
+/** Tickets that survive a restart and work across replicas. Only a hash of the token is stored. */
+export class PostgresTicketStore implements TicketStore {
+  private readonly ensure: () => Promise<void>;
+
+  constructor(private readonly database: AssistantDatabase) {
+    this.ensure = database.prepared(TICKET_DDL);
+  }
+
+  private hash(token: string): string {
+    return new Bun.CryptoHasher("sha256").update(token).digest("hex");
+  }
+
+  async put(ticket: Ticket): Promise<void> {
+    await this.ensure();
+    await this.database.pool.query(
+      "INSERT INTO chat_tickets (token_hash, user_email, intent, path, expires_at) VALUES ($1, $2, $3, $4, to_timestamp($5))",
+      [this.hash(ticket.token), ticket.user, JSON.stringify(ticket.intent), ticket.path, ticket.expiresAt / 1000]
+    );
+  }
+
+  /** One DELETE … RETURNING: find and spend are the same statement, so two frames cannot both win. */
+  async take(token: string): Promise<Ticket | null> {
+    await this.ensure();
+    const result = await this.database.pool.query(
+      "DELETE FROM chat_tickets WHERE token_hash = $1 RETURNING user_email, intent, path, extract(epoch FROM expires_at) * 1000 AS expires_ms",
+      [this.hash(token)]
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      token,
+      user: row.user_email,
+      intent: row.intent,
+      path: row.path,
+      expiresAt: Math.round(Number(row.expires_ms)),
+    };
+  }
+
+  async sweep(now: number): Promise<void> {
+    await this.ensure();
+    await this.database.pool.query("DELETE FROM chat_tickets WHERE expires_at <= to_timestamp($1)", [now / 1000]);
   }
 }
 

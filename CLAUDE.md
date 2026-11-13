@@ -617,7 +617,18 @@ What to keep true when touching it:
   it in `chatdb` across restarts, and answers 503 until it has one — "not known yet" must never read
   as "off", or every restart would lift the administrator's lock on `/report`. An application
   generated before the switches existed has neither, and the assistant then treats itself as enabled.
-- `root-ci.yml` has a job for it (`Chat assistant`); `build-and-run.yml` does not start it yet.
+- **It writes only on the person's own press.** `propose_move` and `propose_update` file a proposal and
+  say nothing has happened; `POST /chat/api/actions/<id>/confirm` (same origin, JSON, the person's own
+  session, one use, five minutes) runs the application's call with the version the record was read at.
+  The model cannot confirm. Do not add a tool that writes directly.
+- **Conversations and tickets are in `chatdb`** (`chat_threads`, `chat_tickets`). The CopilotKit runner is
+  wrapped, not replaced (`durable.ts`): its thread endpoints are synchronous. A stored thread's owner is
+  never rewritten, and restoring never replaces a thread the process already holds.
+- **Rate limits are per process** (`CHAT_RATE_PER_USER`, `CHAT_RATE_PER_ADDRESS`, `CHAT_RATE_MODEL_PER_USER`;
+  0 turns one off). With replicas each keeps its own counter, which loosens the limit and never tightens it.
+- `root-ci.yml` has a job for it (`Chat assistant`); `build-and-run.yml` starts it with `--with-chat` and runs
+  `common/build/chat-smoke.sh` (sign-in, single-use tickets in both products, the delegated reporting sign-in).
+  `bun run check:overlay` holds the sub-path overlay's anchors against the real reporting `vite.config.ts`.
 
 ### Logging, errors and tracing — the products' own, passed through
 

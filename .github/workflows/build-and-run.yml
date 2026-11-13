@@ -196,7 +196,7 @@ jobs:
       # the reporting pack, keeps the secrets just written, and brings the whole
       # stack up. Everything it writes stays under common/.runtime/.
       - name: Check, generate, configure and start
-        run: ./start.sh "${{ inputs.model || 'common/language/examples/crm.eml.mmd' }}" --profile "${{ inputs.profile || 'demo' }}"
+        run: ./start.sh "${{ inputs.model || 'common/language/examples/crm.eml.mmd' }}" --profile "${{ inputs.profile || 'demo' }}" --with-chat
 
       # nginx is the front door and answers as soon as it is up, so its health
       # endpoint says nothing about either application behind it. Both are
@@ -220,6 +220,7 @@ jobs:
           wait_for "the front door" http://localhost/healthz
           wait_for "the generated application" http://localhost/app/
           wait_for "the reporting platform" http://localhost/report/
+          wait_for "the chat assistant" http://localhost/chat/healthz
 
       # Status codes alone do not settle it. An application served under a URL
       # prefix it was not built for answers a stylesheet request with its own
@@ -229,6 +230,13 @@ jobs:
       # that.
       - name: Smoke-test both applications, content types included
         run: ORIGIN=http://localhost bash common/build/smoke.sh
+
+      # The assistant's own surface, against the real application and platform:
+      # sign in with an application account, open a page in each product through
+      # a single-use ticket, and see the reporting platform accept the delegated
+      # sign-in. No language model is needed, so this runs on a runner with none.
+      - name: Smoke-test the chat assistant
+        run: ORIGIN=http://localhost bash common/build/chat-smoke.sh
 
       # The seeder is one shot: it registers the generated application's
       # database as a data source, caches its introspected schema, and writes
@@ -277,9 +285,9 @@ jobs:
         if: always()
         run: |
           mkdir -p logs
-          docker compose --env-file "$RUNTIME/.env" ps -a > logs/ps.txt 2>&1 || true
-          for s in $(docker compose --env-file "$RUNTIME/.env" ps --services 2>/dev/null); do
-            docker compose --env-file "$RUNTIME/.env" logs --no-color --tail 2000 "$s" > "logs/$s.log" 2>&1 || true
+          docker compose --profile chat --env-file "$RUNTIME/.env" ps -a > logs/ps.txt 2>&1 || true
+          for s in $(docker compose --profile chat --env-file "$RUNTIME/.env" ps --services 2>/dev/null); do
+            docker compose --profile chat --env-file "$RUNTIME/.env" logs --no-color --tail 2000 "$s" > "logs/$s.log" 2>&1 || true
           done
 
       - name: Keep the logs and the generated application

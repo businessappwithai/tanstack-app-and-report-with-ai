@@ -9,6 +9,8 @@
  *   GET  /chat/api/session          who is signed in, and the administrator's two switches
  *   POST /chat/api/tickets          exchange an intent for a single-use ticket
  *   GET  /chat/open/<ticket>        redeem a ticket: redirect the frame to the real page
+ *   POST /chat/api/actions/<id>/confirm   run a change the assistant proposed (the person's own press)
+ *   POST /chat/api/actions/<id>/decline   drop it
  *   GET  /chat/api/audit            the audit trail (administrators)
  *   ALL  /chat/api/copilotkit/*     the CopilotKit runtime
  *   GET  /chat/*                    the built client
@@ -22,8 +24,9 @@ import {
   BuiltInAgent,
   CopilotRuntime,
   createCopilotRuntimeHandler,
-  InMemoryAgentRunner,
 } from "@copilotkit/runtime/v2";
+import { ActionStore, execute } from "./actions";
+import { DurableAgentRunner, MemoryThreadStore, type ThreadStore } from "./durable";
 import type { AuditLog } from "./audit";
 import type { AssistantConfig } from "./config";
 import {
@@ -35,6 +38,7 @@ import {
   type ReportSession,
 } from "./products";
 import { type Clients, NotAvailable, resolveIntent } from "./registry";
+import { clientAddress, RateLimiter } from "./ratelimit";
 import { signStatement } from "./signing";
 import { MemorySwitchStore, type Switches, type SwitchStore } from "./switches";
 import type { Intent, TicketService } from "./tickets";
@@ -50,6 +54,10 @@ export interface AssistantDeps {
   switches?: SwitchStore;
   /** Serves the built client; absent in tests. */
   serveClient?: (request: Request, path: string) => Promise<Response> | Response;
+  /** Where conversations are saved so they survive a restart; in memory when absent. */
+  threads?: ThreadStore;
+  /** Proposed changes awaiting confirmation; the tests share one to propose from outside. */
+  actions?: ActionStore;
   /** Replaces the language model; the tests pass a scripted one. */
   model?: unknown;
 }
@@ -74,6 +82,11 @@ const NOT_AVAILABLE_PAGE = `<!doctype html><meta charset="utf-8"><title>Not avai
 export function createAssistant(deps: AssistantDeps): (request: Request) => Promise<Response> {
   const { config, tickets, audit } = deps;
   const base = config.basePath;
+  const actions = deps.actions ?? new ActionStore(config.actionTtlSeconds);
+  const limiter = new RateLimiter();
+  const perMinute = (max: number) => ({ max, windowSeconds: 60 });
+  const tooMany = (retryAfterSeconds: number): Response =>
+    json({ error: "Too many requests. Try again shortly." }, 429, { "retry-after": String(retryAfterSeconds) });
 
   // Short caches: a role taken away, or the feature switched off, takes effect within seconds.
   const people = new Map<string, { until: number; caller: Caller | null }>();
@@ -161,6 +174,7 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
       apiKey: config.ai.apiKey,
     }).chatModel(config.ai.model);
 
+  const runner = new DurableAgentRunner(deps.threads ?? new MemoryThreadStore());
   const runtime = new CopilotRuntime({
     // Built per request, so the tools close over this person's own session.
     agents: async ({ request }) => {
@@ -171,7 +185,7 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
           model: model as never,
           prompt: `${SYSTEM_PROMPT}\n\nYou are talking to ${caller.person.name}. The application is called ${caller.switches.appName}.`,
           maxSteps: 8,
-          tools: buildTools({ config, person: caller.person, clients: clientsFor(caller), audit }),
+          tools: buildTools({ config, person: caller.person, clients: clientsFor(caller), audit, actions }),
         }),
       };
     },
@@ -179,9 +193,11 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
     identifyUser: async (request) => {
       const caller = await identify(request);
       if (!caller) throw new Error("Not signed in");
+      // Saved conversations come back before the runtime asks whose they are.
+      await runner.restore(caller.person.email).catch(() => undefined);
       return { id: caller.person.email, name: caller.person.name };
     },
-    runner: new InMemoryAgentRunner(),
+    runner,
   });
   const copilot = createCopilotRuntimeHandler({ runtime, basePath: `${base}/api/copilotkit` });
 
@@ -212,6 +228,12 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
     const path = url.pathname.slice(base.length) || "/";
 
     if (path === "/healthz") return json({ ok: true });
+
+    // Everything without a session — and sign-in attempts — is limited by network address.
+    if (path === "/switches" || path.startsWith("/open/") || path.startsWith("/api/auth/")) {
+      const verdict = limiter.check(`ip:${clientAddress(request)}`, perMinute(config.rateLimits.perAddress));
+      if (!verdict.ok) return tooMany(verdict.retryAfterSeconds);
+    }
     // Two booleans and nothing about anybody: the reporting platform asks without a session.
     // 503 until a reading exists, so "not known yet" is never taken for "off".
     if (path === "/switches") {
@@ -255,7 +277,12 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
         // "Could not check" is not "signed out": do not send anyone to the sign-in form for an outage.
         return json({ error: "The application could not be reached." }, 503);
       }
-      if (!caller) return json({ error: "Not signed in" }, 401);
+      if (!caller) {
+        const verdict = limiter.check(`ip:${clientAddress(request)}`, perMinute(config.rateLimits.perAddress));
+        return verdict.ok ? json({ error: "Not signed in" }, 401) : tooMany(verdict.retryAfterSeconds);
+      }
+      const user = limiter.check(`user:${caller.person.email}`, perMinute(config.rateLimits.perUser));
+      if (!user.ok) return tooMany(user.retryAfterSeconds);
 
       if (path === "/api/session") {
         return json(
@@ -285,12 +312,41 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
         }
       }
 
+      const decision = /^\/api\/actions\/([A-Za-z0-9_-]{1,64})\/(confirm|decline)$/.exec(path);
+      if (decision && request.method === "POST") {
+        // A change is the person's own press, from this site: a cross-site form or a script
+        // on another origin carries their cookie but not this origin.
+        const origin = request.headers.get("origin");
+        if (origin !== config.publicOrigin || !request.headers.get("content-type")?.includes("application/json")) {
+          return json({ error: "Refused" }, 403);
+        }
+        const action = actions.take(decision[1] as string, caller.person.email);
+        if (!action) return json({ error: "That change is no longer waiting. Ask again." }, 404);
+        const target = `${action.change.object}:${action.change.id}`;
+        if (decision[2] === "decline") {
+          await audit.record({ user: caller.person.email, tool: `decline_${action.change.kind}`, target, outcome: "ok" }).catch(() => undefined);
+          return json({ ok: true, message: "Declined." });
+        }
+        const outcome = await execute(new AppClient(config, caller.cookie), action.change);
+        await audit
+          .record({ user: caller.person.email, tool: `confirm_${action.change.kind}`, target, outcome: outcome.ok ? "ok" : "refused" })
+          .catch(() => undefined);
+        return json(outcome, outcome.ok ? 200 : 422);
+      }
+
       if (path === "/api/audit" && request.method === "GET") {
         if (!caller.person.isMaster) return json({ error: "Administrators only" }, 403);
         return json({ entries: await audit.recent(200) });
       }
 
-      if (path.startsWith("/api/copilotkit")) return copilot(request);
+      if (path.startsWith("/api/copilotkit")) {
+        // A conversation turn runs the language model; that is the expensive call, so it has its own limit.
+        if (request.method === "POST") {
+          const model = limiter.check(`model:${caller.person.email}`, perMinute(config.rateLimits.modelPerUser));
+          if (!model.ok) return tooMany(model.retryAfterSeconds);
+        }
+        return copilot(request);
+      }
 
       return json({ error: "Not found" }, 404);
     }

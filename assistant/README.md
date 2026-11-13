@@ -33,8 +33,8 @@ plan and says what is done.
 
 | Where | What |
 |---|---|
-| Orchestrator | move both pins once the products' sides are merged; a composed run; `build-and-run.yml` |
-| Here | conversations and tickets in the database (both are in memory now, so one replica and lost on restart); create/update/action-button tools with confirmation; rate limits; a run with a real model |
+| Orchestrator | a composed run on a machine with room for the images (`build-and-run.yml` does it, with `common/build/chat-smoke.sh`) |
+| Here | a run with a real model; pending write proposals in the database, if more than one replica is wanted |
 
 ## Run it
 

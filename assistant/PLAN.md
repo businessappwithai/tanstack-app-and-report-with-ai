@@ -195,15 +195,30 @@ assistant relays to the browser. `decideQueryRun` and `validateQueryAccess` then
   a direct call and admits the same person through the assistant; the Accounts page renders in the
   frame without the application's own chrome.
 
+**Built since the first version**
+- Conversations are saved to `chatdb` (`durable.ts`): the open-source runner keeps threads in memory and its
+  thread endpoints are synchronous, so the runner is wrapped, not replaced. A finished run is written behind
+  the store, and a person's saved threads are loaded back before their next request, through the runtime's
+  own `appendRun`. A stored thread's owner is never rewritten.
+- Tickets can live in the same database (`PostgresTicketStore`): the token is hashed at rest and redeeming is
+  one `DELETE … RETURNING`, so two replicas racing on one ticket still give one winner.
+- Write tools — `propose_move` (an action button) and `propose_update` (fields) — only propose. The proposal
+  is a card in the chat; `POST /chat/api/actions/<id>/confirm` is the person's own press, same-origin and JSON
+  only, and runs the application's own call with the version the record was read at. A move the person has no
+  button for is never proposed; status, identity, version and audit columns cannot be proposed at all.
+- Rate limits: per account (`CHAT_RATE_PER_USER`), per address for everything without a session
+  (`CHAT_RATE_PER_ADDRESS`), and a tighter one on model turns (`CHAT_RATE_MODEL_PER_USER`); 429 with `Retry-After`.
+- `common/build/chat-smoke.sh` runs against the composed stack in `build-and-run.yml`: sign-in through `/chat`,
+  a ticket opened once and only once in each product, the reporting platform accepting the delegated sign-in.
+
 **Not done yet**
-- The `deps.json` pins still name commits without the two products' sides. The composed stack works
-  end to end only once those two pull requests are merged and the pins moved.
-- A composed run (`./start.sh --with-chat`) has not been made: Docker was not available where this was
-  built. The services were run together directly instead.
+- A composed run (`./start.sh --with-chat`) has not completed where this was built: the images build, but the
+  session's disk allowance ran out before the reporting image finished. The same steps run in
+  `build-and-run.yml`; the smoke script was checked against the stand-in products.
 - No real language model has been used. Every conversation so far was a scripted stand-in, so how well
-  a model picks tools is untested.
-- Durable conversations and tickets (both in memory: one replica, lost on restart), the write tools
-  with confirmation, rate limits, and an end-to-end run in `build-and-run.yml`.
+  a model picks tools, and phrases a proposal, is untested.
+- Pending write proposals are in memory (five minutes): a restart between "propose" and "confirm" loses them,
+  and with several replicas the confirm must reach the replica that proposed it.
 
 **Changed from the plan above, and why:**
 - The assistant is a Vite single-page client with a small Bun server, not TanStack Start. It needs no
