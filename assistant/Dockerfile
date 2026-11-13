@@ -3,7 +3,7 @@
 FROM oven/bun:1.4.4 AS build
 WORKDIR /srv
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+RUN bun install --frozen-lockfile --ignore-scripts
 COPY . .
 ARG CHAT_BASE_PATH=/chat
 ENV CHAT_BASE_PATH=${CHAT_BASE_PATH}

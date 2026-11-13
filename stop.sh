@@ -26,7 +26,7 @@ command -v docker >/dev/null 2>&1 || { echo "docker is not installed." >&2; exit
 # `down` only removes services in the profiles it is given, so both are named:
 # stopping after a --profile prod run would otherwise leave its two database
 # containers behind, and the next demo start would find the volumes in use.
-ARGS=(--profile demo --profile prod)
+ARGS=(--profile demo --profile prod --profile chat)
 [[ -f "$ENV_FILE" ]] && ARGS=(--env-file "$ENV_FILE" "${ARGS[@]}")
 
 docker compose "${ARGS[@]}" down --remove-orphans ${VOLUMES}

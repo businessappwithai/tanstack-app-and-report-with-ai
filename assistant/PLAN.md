@@ -1,4 +1,4 @@
-# A chat front door to the generated application and Enterprise Reporting, on open-source CopilotKit
+# The assistant: a chat front door to the generated application and Enterprise Reporting
 
 ## Context
 
@@ -8,16 +8,12 @@ either product by natural language, finds a record or document, and works on it 
 page embedded in the chat. Access must be exactly what the generated application's `%%rbac` gives that
 user; the embedded address must be opaque; an administrator turns it on and can make chat the only way in.
 
-**Revised direction (your last instruction):** OpenBot is removed completely. We build our own
-assistant, similar in purpose, on the **open-source CopilotKit packages only**, at their latest release.
-No CopilotKit Intelligence, no CopilotKit cloud, no licence key, no third-party checkout.
+It is our own service, built on the **open-source CopilotKit packages only**, at their latest release:
+no CopilotKit Intelligence, no CopilotKit cloud, no licence key, no third-party checkout.
 
-Decisions carried over: opaque single-use tickets plus lock-down (no per-path encryption); in chat-only
-mode administrators keep direct access. The earlier Intelligence and source-pinning decisions no longer
-apply.
-
-Assumption to confirm: the code lives in **`assistant/`** in `tanstack-app-and-report-with-ai`. You asked
-for `openbot/` when it was OpenBot; say so if you want that name kept.
+Decisions taken: opaque single-use tickets plus lock-down (no per-path encryption); in chat-only mode
+administrators keep direct access; the service is called the assistant and everything of its own lives
+in `assistant/` in `tanstack-app-and-report-with-ai`, this document included.
 
 ## Patterns followed
 
@@ -105,7 +101,7 @@ assistant relays to the browser. `decideQueryRun` and `validateQueryAccess` then
   chat frame with a valid embed cookie, and redirect to `/chat`. Administrators are exempt.
 - Whether the container exists is a deployment choice: `./start.sh --with-chat`.
 
-**"Similar to OpenBot" — what is in and what is not.**
+**What is in and what is not.**
 - In: multiple saved conversations, generative UI cards (record, table, chart, approval), saved prompts
   per user, an audit trail of every tool call, an admin page (usage, audit, model settings).
 - Later, if you want it: scheduled routines that run as their creator.
@@ -181,18 +177,33 @@ assistant relays to the browser. `decideQueryRun` and `validateQueryAccess` then
 
 ## Progress
 
-**Done (first checkpoint):** `assistant/` — the service itself.
-- Server: identity from the application's session, product clients, the intent registry, single-use
-  tickets, the audit trail, nine tools (find, search, read, my work, open record/page/report, search and
-  run reports), and the CopilotKit 1.87.0 runtime with a per-request agent.
-- Client: sign-in, the chat, and a workspace that shows opened pages in frames loaded by ticket.
-- 14 tests against stand-in products and a scripted model, and a browser run of the whole flow.
+**Done**
+- `assistant/` — the service: identity from the application's session, product clients, the intent
+  registry, single-use tickets, the audit trail (PostgreSQL, creating its own database), nine tools
+  (find, search, read, my work, open record/page/report, search and run reports), the CopilotKit 1.87.0
+  runtime with a per-request agent, and the client (sign-in, chat, framed workspace).
+- Orchestrator wiring: the `assistant` compose service behind profile `chat`, nginx `/chat/`,
+  `./start.sh --with-chat`, `CHAT_BRIDGE_SECRET` written once, the landing page's third door, a CI job.
+- Reporting platform (its own pull request): delegated sign-in with role sync, search, embed mode,
+  frame headers, chat-only mode. Checked against a running server on PostgreSQL.
 
-**Not done yet:** everything outside `assistant/` — the reporting platform's delegate, search and embed
-mode; the generated application's embed mode, the two administrator switches and chat-only lock-down;
-compose, nginx, `start.sh`, the landing page and CI. Until those land the assistant is not reachable
-in a deployment. Also still to do inside it: durable conversations and tickets, the write tools with
-confirmation, rate limits.
+- Generated application (its own pull request): the two administrator switches, chat-only mode
+  enforced in the session guard, embed mode, and the frame-aware sign-out handling.
+- Run together, outside Docker: a CRM application generated from these templates, the reporting
+  platform and the assistant, on PostgreSQL. The Support Agent reads 5 of 17 entities through the
+  assistant; a hidden entity is refused; a report page opens with a delegated session; chat-only refuses
+  a direct call and admits the same person through the assistant; the Accounts page renders in the
+  frame without the application's own chrome.
+
+**Not done yet**
+- The `deps.json` pins still name commits without the two products' sides. The composed stack works
+  end to end only once those two pull requests are merged and the pins moved.
+- A composed run (`./start.sh --with-chat`) has not been made: Docker was not available where this was
+  built. The services were run together directly instead.
+- No real language model has been used. Every conversation so far was a scripted stand-in, so how well
+  a model picks tools is untested.
+- Durable conversations and tickets (both in memory: one replica, lost on restart), the write tools
+  with confirmation, rate limits, and an end-to-end run in `build-and-run.yml`.
 
 **Changed from the plan above, and why:**
 - The assistant is a Vite single-page client with a small Bun server, not TanStack Start. It needs no

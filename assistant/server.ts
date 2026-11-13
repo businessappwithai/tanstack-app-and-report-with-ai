@@ -7,11 +7,15 @@ import { join, normalize, resolve } from "node:path";
 import { createAssistant } from "./src/server/app";
 import { createAuditLog } from "./src/server/audit";
 import { loadConfig } from "./src/server/config";
+import { openDatabase } from "./src/server/database";
+import { createSwitchStore } from "./src/server/switches";
 import { MemoryTicketStore, TicketService } from "./src/server/tickets";
 
 const config = loadConfig();
 const clientDir = resolve(import.meta.dir, "dist/client");
 const tickets = new MemoryTicketStore();
+// One pool for everything the assistant keeps; in memory when no database is configured.
+const database = config.databaseUrl ? openDatabase(config.databaseUrl) : null;
 
 /** Framing is for this origin's own pages only; nothing is cached that names a person. */
 const PAGE_HEADERS = {
@@ -39,7 +43,8 @@ function serveClient(_request: Request, path: string): Response {
 
 const handle = createAssistant({
   config,
-  audit: createAuditLog(config.databaseUrl),
+  audit: createAuditLog(database),
+  switches: createSwitchStore(database),
   tickets: new TicketService(tickets, config.ticketTtlSeconds),
   serveClient,
 });

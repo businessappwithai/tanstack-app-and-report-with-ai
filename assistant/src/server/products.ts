@@ -63,6 +63,24 @@ async function readJson(response: Response): Promise<any> {
   }
 }
 
+/**
+ * The header that tells the application a call is the assistant's own. In
+ * chat-only mode the application answers only requests that came through the
+ * assistant; a page in the frame carries the embed cookie, and the assistant's
+ * server-side calls carry this. It names nobody and grants nothing — the
+ * person's session cookie, sent beside it, is still what every guard reads.
+ */
+export const BRIDGE_HEADER = "x-chat-bridge";
+
+let bridge: { until: number; value: string } | null = null;
+
+async function bridgeStatement(config: AssistantConfig): Promise<string> {
+  if (bridge && bridge.until > Date.now()) return bridge.value;
+  const value = await signStatement(config.bridgeSecret, { aud: "bridge", sub: "assistant" }, 300);
+  bridge = { until: Date.now() + 240_000, value };
+  return value;
+}
+
 /** The generated application's API, called with one person's session cookie. */
 export class AppClient {
   constructor(
@@ -77,6 +95,7 @@ export class AppClient {
         accept: "application/json",
         cookie: this.cookie,
         origin: this.config.publicOrigin,
+        [BRIDGE_HEADER]: await bridgeStatement(this.config),
         ...(init.body ? { "content-type": "application/json" } : {}),
         ...(init.headers as Record<string, string> | undefined),
       },
@@ -230,7 +249,7 @@ export async function delegateReportSession(
     },
     60
   );
-  const response = await fetch(`${config.reportUrl}${config.reportBasePath}/api/auth/delegate`, {
+  const response = await fetch(`${config.reportUrl}${config.reportBasePath}/api/chat/delegate`, {
     method: "POST",
     headers: { "content-type": "application/json", origin: config.publicOrigin },
     body: JSON.stringify({ assertion }),

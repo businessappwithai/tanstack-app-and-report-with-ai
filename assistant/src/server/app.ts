@@ -4,6 +4,7 @@
  * Everything is under the base path (`/chat`):
  *
  *   GET  /chat/healthz              liveness, no session
+ *   GET  /chat/switches             the administrator's two switches as last read (503 until known)
  *   ALL  /chat/api/auth/*           the generated application's own sign-in, passed through
  *   GET  /chat/api/session          who is signed in, and the administrator's two switches
  *   POST /chat/api/tickets          exchange an intent for a single-use ticket
@@ -35,6 +36,7 @@ import {
 } from "./products";
 import { type Clients, NotAvailable, resolveIntent } from "./registry";
 import { signStatement } from "./signing";
+import { MemorySwitchStore, type Switches, type SwitchStore } from "./switches";
 import type { Intent, TicketService } from "./tickets";
 import { buildTools, SYSTEM_PROMPT } from "./tools";
 
@@ -44,6 +46,8 @@ export interface AssistantDeps {
   config: AssistantConfig;
   tickets: TicketService;
   audit: AuditLog;
+  /** Where the last reading of the administrator's switches is kept; in memory when absent. */
+  switches?: SwitchStore;
   /** Serves the built client; absent in tests. */
   serveClient?: (request: Request, path: string) => Promise<Response> | Response;
   /** Replaces the language model; the tests pass a scripted one. */
@@ -74,6 +78,43 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
   // Short caches: a role taken away, or the feature switched off, takes effect within seconds.
   const people = new Map<string, { until: number; caller: Caller | null }>();
   const reportSessions = new Map<string, ReportSession>();
+  // The switches as last read from the application; null until one is known. See switches.ts
+  // for why "not known yet" is never reported as "off".
+  const switchStore = deps.switches ?? new MemorySwitchStore();
+  let lastSwitches: Switches | null = null;
+
+  // What is known to be written down. Compared against this, not against memory: a save that
+  // failed must be tried again at the next reading, or a restart would come back with the
+  // older row and report it as known.
+  let savedSwitches: Switches | null = null;
+  const same = (a: Switches | null, b: Switches): boolean =>
+    a !== null && a.enabled === b.enabled && a.chatOnly === b.chatOnly;
+
+  // Saves run one after another, so the last one written is the last one read. Until a
+  // write lands, what is stored is unknown; and it counts as saved only if it is still the
+  // latest reading, or a slower, older save could finish last and be believed.
+  let saving: Promise<void> = Promise.resolve();
+
+  const rememberSwitches = (next: Switches): void => {
+    lastSwitches = next;
+    if (same(savedSwitches, next)) return;
+    savedSwitches = null;
+    saving = saving
+      .then(() => switchStore.save(next))
+      .then(() => {
+        if (lastSwitches === next) savedSwitches = next;
+      })
+      .catch(() => undefined);
+  };
+
+  /** What this process knows, else what the last one wrote down, else nothing. */
+  const knownSwitches = async (): Promise<Switches | null> => {
+    if (lastSwitches) return lastSwitches;
+    const stored = await switchStore.load().catch(() => null);
+    // A reading taken while the load was pending is newer than anything stored.
+    lastSwitches ??= stored;
+    return lastSwitches;
+  };
 
   async function identify(request: Request): Promise<Caller | null> {
     const cookie = request.headers.get("cookie") ?? "";
@@ -83,6 +124,7 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
     const app = new AppClient(config, cookie);
     const person = await app.me();
     const caller = person ? { person, cookie, switches: await app.switches() } : null;
+    if (caller) rememberSwitches({ enabled: caller.switches.enabled, chatOnly: caller.switches.chatOnly });
     people.set(cookie, { until: Date.now() + 15_000, caller });
     if (people.size > 5000) people.clear();
     return caller;
@@ -170,6 +212,12 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
     const path = url.pathname.slice(base.length) || "/";
 
     if (path === "/healthz") return json({ ok: true });
+    // Two booleans and nothing about anybody: the reporting platform asks without a session.
+    // 503 until a reading exists, so "not known yet" is never taken for "off".
+    if (path === "/switches") {
+      const known = await knownSwitches();
+      return known ? json({ known: true, ...known }) : json({ known: false }, 503);
+    }
 
     if (path.startsWith("/api/auth/")) {
       return passAuthThrough(request, path.slice("/api/auth/".length), url.search);
