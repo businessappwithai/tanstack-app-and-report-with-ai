@@ -144,6 +144,9 @@ services:
       # is the origin the API must accept a sign-in from — not the port the
       # front end happens to listen on inside its container.
       CORS_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost}
+      # The chat assistant (./start.sh --with-chat). Empty without it, and the
+      # application then never applies chat-only mode, whatever its switch says.
+      CHAT_BRIDGE_SECRET: ${CHAT_BRIDGE_SECRET:-}
       PORT: "4001"
       ELECTRIC_URL: http://electric:3000
       AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:8000/v1}

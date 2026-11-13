@@ -7,9 +7,10 @@ CopilotKit packages (1.87.0) and nothing else from CopilotKit: no Intelligence,
 no cloud, no licence key, telemetry off.
 
 **Status.** The service runs, is tested, and is wired into the orchestrator behind
-`./start.sh --with-chat`. A composed run has not been made yet, and the generated
-application does not yet have its side (embed mode and the administrator's two
-switches). `../openbotcompat.md` is the plan and says what is done.
+`./start.sh --with-chat`. It has been run against a real generated application
+and the real reporting platform, outside Docker. A composed run has not been
+made, and no real language model has been used yet. `../openbotcompat.md` is the
+plan and says what is done.
 
 ## What holds today
 
@@ -32,9 +33,8 @@ switches). `../openbotcompat.md` is the plan and says what is done.
 
 | Where | What |
 |---|---|
-| Generated application | embed mode, the two switches (`CHAT_ENABLED`, `CHAT_ONLY_MODE`) in `/api/sys/app-info`, the chat-only redirect |
-| Orchestrator | move the reporting pin once its side is merged; a composed run; `build-and-run.yml` |
-| Here | conversations and tickets in the database (both are in memory now, so one replica and lost on restart); create/update/action-button tools with confirmation; rate limits |
+| Orchestrator | move both pins once the products' sides are merged; a composed run; `build-and-run.yml` |
+| Here | conversations and tickets in the database (both are in memory now, so one replica and lost on restart); create/update/action-button tools with confirmation; rate limits; a run with a real model |
 
 ## Run it
 

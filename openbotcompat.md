@@ -191,14 +191,21 @@ assistant relays to the browser. `decideQueryRun` and `validateQueryAccess` then
 - Reporting platform (its own pull request): delegated sign-in with role sync, search, embed mode,
   frame headers, chat-only mode. Checked against a running server on PostgreSQL.
 
+- Generated application (its own pull request): the two administrator switches, chat-only mode
+  enforced in the session guard, embed mode, and the frame-aware sign-out handling.
+- Run together, outside Docker: a CRM application generated from these templates, the reporting
+  platform and the assistant, on PostgreSQL. The Support Agent reads 5 of 17 entities through the
+  assistant; a hidden entity is refused; a report page opens with a delegated session; chat-only refuses
+  a direct call and admits the same person through the assistant; the Accounts page renders in the
+  frame without the application's own chrome.
+
 **Not done yet**
-- Generated application: embed mode (its sidebar and header still show inside the frame), the two
-  administrator switches, and the chat-only redirect. Until then the assistant treats itself as enabled
-  and nothing is locked.
-- The `deps.json` pin for the reporting platform still names a commit without its side of this; the
-  composed stack only works end to end once that pull request is merged and the pin moved.
+- The `deps.json` pins still name commits without the two products' sides. The composed stack works
+  end to end only once those two pull requests are merged and the pins moved.
 - A composed run (`./start.sh --with-chat`) has not been made: Docker was not available where this was
-  built. The pieces were checked separately.
+  built. The services were run together directly instead.
+- No real language model has been used. Every conversation so far was a scripted stand-in, so how well
+  a model picks tools is untested.
 - Durable conversations and tickets (both in memory: one replica, lost on restart), the write tools
   with confirmation, rate limits, and an end-to-end run in `build-and-run.yml`.
 
