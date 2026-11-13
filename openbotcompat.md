@@ -181,18 +181,26 @@ assistant relays to the browser. `decideQueryRun` and `validateQueryAccess` then
 
 ## Progress
 
-**Done (first checkpoint):** `assistant/` — the service itself.
-- Server: identity from the application's session, product clients, the intent registry, single-use
-  tickets, the audit trail, nine tools (find, search, read, my work, open record/page/report, search and
-  run reports), and the CopilotKit 1.87.0 runtime with a per-request agent.
-- Client: sign-in, the chat, and a workspace that shows opened pages in frames loaded by ticket.
-- 14 tests against stand-in products and a scripted model, and a browser run of the whole flow.
+**Done**
+- `assistant/` — the service: identity from the application's session, product clients, the intent
+  registry, single-use tickets, the audit trail (PostgreSQL, creating its own database), nine tools
+  (find, search, read, my work, open record/page/report, search and run reports), the CopilotKit 1.87.0
+  runtime with a per-request agent, and the client (sign-in, chat, framed workspace).
+- Orchestrator wiring: the `assistant` compose service behind profile `chat`, nginx `/chat/`,
+  `./start.sh --with-chat`, `CHAT_BRIDGE_SECRET` written once, the landing page's third door, a CI job.
+- Reporting platform (its own pull request): delegated sign-in with role sync, search, embed mode,
+  frame headers, chat-only mode. Checked against a running server on PostgreSQL.
 
-**Not done yet:** everything outside `assistant/` — the reporting platform's delegate, search and embed
-mode; the generated application's embed mode, the two administrator switches and chat-only lock-down;
-compose, nginx, `start.sh`, the landing page and CI. Until those land the assistant is not reachable
-in a deployment. Also still to do inside it: durable conversations and tickets, the write tools with
-confirmation, rate limits.
+**Not done yet**
+- Generated application: embed mode (its sidebar and header still show inside the frame), the two
+  administrator switches, and the chat-only redirect. Until then the assistant treats itself as enabled
+  and nothing is locked.
+- The `deps.json` pin for the reporting platform still names a commit without its side of this; the
+  composed stack only works end to end once that pull request is merged and the pin moved.
+- A composed run (`./start.sh --with-chat`) has not been made: Docker was not available where this was
+  built. The pieces were checked separately.
+- Durable conversations and tickets (both in memory: one replica, lost on restart), the write tools
+  with confirmation, rate limits, and an end-to-end run in `build-and-run.yml`.
 
 **Changed from the plan above, and why:**
 - The assistant is a Vite single-page client with a small Bun server, not TanStack Start. It needs no

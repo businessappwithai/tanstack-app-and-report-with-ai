@@ -110,7 +110,7 @@ export function startFakeReport() {
     port: 0,
     async fetch(request) {
       const path = new URL(request.url).pathname;
-      if (path === "/report/api/auth/delegate" && request.method === "POST") {
+      if (path === "/report/api/chat/delegate" && request.method === "POST") {
         const { assertion } = (await request.json()) as { assertion: string };
         const claims = await verifyStatement(SECRET, assertion, "report-delegate");
         if (!claims) return json({ error: "Refused" }, 401);

@@ -587,6 +587,36 @@ failure looks like a broken data source rather than a rotated key. Writing
 way to inject configuration — it keeps what it finds and rewrites only the block
 it derives from the run. `build-and-run.yml` uses exactly that.
 
+### The chat assistant — `assistant/`, optional, at `/chat`
+
+`./start.sh --with-chat` adds a third service: a chat workspace through which a signed-in person
+reaches both applications by asking, and works on the real pages in a frame beside the conversation.
+It is **ours, and lives here** — `assistant/` is a package with its own lockfile, not a pinned
+checkout — and it is built on the open-source CopilotKit packages only (1.87.0; no Intelligence, no
+cloud, telemetry off). `openbotcompat.md` is the design and what is still to do; `assistant/README.md`
+is how to run it alone.
+
+What to keep true when touching it:
+
+- **It decides nothing about access.** It forwards the person's own application session cookie (one
+  origin, so the browser sends it) and the application's guards answer. For the reporting platform it
+  asks for a session for the same person (`POST /report/api/chat/delegate`, signed with
+  `CHAT_BRIDGE_SECRET`), and that platform's own checks answer. There is no service account.
+- **The model never sees or writes an address.** Tools return an intent; `src/server/registry.ts` is
+  the one place a path is written, after the product confirmed the person may read the target. The
+  chat holds a single-use, 60-second ticket, and the frame loads `/chat/open/<ticket>`.
+- **`CHAT_BRIDGE_SECRET` is a secret like the other five**: written once into `common/.runtime/.env`
+  the first time `--with-chat` is used, then left alone. The reporting platform and the assistant must
+  hold the same value; without it the platform refuses delegated sign-ins and cannot be framed.
+- **It is behind the compose profile `chat`.** Without `--with-chat` nginx answers `/chat` with 502,
+  the landing page shows two doors, and the platform's `CHAT_*` variables are empty.
+- **Its audit database (`chatdb`) is created by the assistant itself** when missing, because
+  `pg-init` runs only on a fresh volume and a deployment that predates the assistant has none.
+- **Two switches belong to the generated application's administrator** (`CHAT_ENABLED`,
+  `CHAT_ONLY_MODE` in `sys_system`); the assistant relays them at `/chat/switches`. An application
+  generated before they existed has neither, and the assistant then treats itself as enabled.
+- `root-ci.yml` has a job for it (`Chat assistant`); `build-and-run.yml` does not start it yet.
+
 ### Logging, errors and tracing — the products' own, passed through
 
 Both products log by declared event and classify every error by category now; the design is each

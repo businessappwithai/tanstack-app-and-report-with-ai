@@ -213,6 +213,13 @@ services:
       # API request, with the same trace and span ids on the platform's log lines.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-enterprise-reporting}
+      # The chat assistant (./start.sh --with-chat). All three are empty without
+      # it, and the platform then neither accepts delegated sign-ins nor allows
+      # itself to be framed.
+      CHAT_BRIDGE_SECRET: ${CHAT_BRIDGE_SECRET:-}
+      CHAT_EMBED: ${CHAT_EMBED:-}
+      CHAT_SWITCHES_URL: ${CHAT_SWITCHES_URL:-}
+      CHAT_URL: /chat/
     extra_hosts:
       - "host.docker.internal:host-gateway"
     expose:
@@ -239,6 +246,47 @@ services:
     depends_on:
       report:
         condition: service_started
+
+  # ── The chat assistant (optional) ─────────────────────────────────────────
+  #
+  # A chat workspace through which a signed-in person reaches both applications
+  # by asking, built on the open-source CopilotKit packages. Behind the `chat`
+  # profile: `./start.sh --with-chat` starts it, and without that nginx answers
+  # /chat with 502 and neither application knows it exists.
+  #
+  # It signs nobody in itself and holds no roles. It forwards the person's own
+  # application session to the application, and asks the reporting platform for
+  # a session for the same person with CHAT_BRIDGE_SECRET. See assistant/README.md.
+  #
+  # No depends_on, for the reason nothing else here has one on a database: it
+  # answers "could not check" while the application is still starting, and
+  # creates its own audit database on first use.
+  assistant:
+    profiles: ["chat"]
+    build:
+      context: ./assistant
+      args:
+        CHAT_BASE_PATH: /chat
+    restart: unless-stopped
+    environment:
+      PORT: "4200"
+      CHAT_BASE_PATH: /chat
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost}
+      APP_API_URL: http://app-backend:4001
+      APP_BASE_PATH: /app
+      REPORT_URL: http://report:3000
+      REPORT_BASE_PATH: /report
+      CHAT_BRIDGE_SECRET: ${CHAT_BRIDGE_SECRET:-}
+      # On the reporting platform's server, so it survives the application being regenerated.
+      CHAT_DATABASE_URL: postgresql://${REPORT_DB_USER:-app}:${REPORT_DB_PASSWORD:-app}@${REPORT_DB_HOST:-postgres}:5432/chatdb
+      # Any OpenAI-compatible endpoint whose model supports tool calling.
+      AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:8000/v1}
+      AI_API_KEY: ${AI_API_KEY:-local}
+      AI_MODEL: ${AI_MODEL:-qwen3.6:27b-mlx}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "4200"
 
   # ── The front door ────────────────────────────────────────────────────────
   nginx:

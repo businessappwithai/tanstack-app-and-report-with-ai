@@ -7,6 +7,7 @@
 #   ./start.sh common/examples/my-app.eml.mmd   any other model
 #   ./start.sh my-app.eml.mmd --profile prod    two database servers
 #   ./start.sh --port 8080                      somewhere other than :80
+#   ./start.sh --with-chat                      also the chat assistant, at /chat
 #
 # When it finishes:
 #
@@ -34,6 +35,7 @@ PROFILE="demo"
 PORT="80"
 REBUILD=""
 KEEP_APP=""
+WITH_CHAT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -41,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     --port)    PORT="${2:-}"; shift 2 ;;
     --rebuild) REBUILD="--no-cache"; shift ;;
     --keep-app) KEEP_APP="1"; shift ;;
+    --with-chat) WITH_CHAT="1"; shift ;;
     -h|--help)
       sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
@@ -124,7 +127,8 @@ say "5/7  Writing the front door"
 # account on it comes from this model's %%rbac.
 mkdir -p "$LANDING_DIR"
 (cd "$COMMON" && bun build/landing.ts \
-    -i "../${PACK_DIR}/reporting-pack.json" -o "../${LANDING_DIR}" --origin "$ORIGIN")
+    -i "../${PACK_DIR}/reporting-pack.json" -o "../${LANDING_DIR}" --origin "$ORIGIN" \
+    ${WITH_CHAT:+--chat})
 
 say "6/7  Configuration"
 # Secrets are generated once and then left alone: regenerating ENCRYPTION_KEY
@@ -149,6 +153,14 @@ fi
 
 # Everything derived from this run is rewritten every time.
 sed -i.bak '/^# --- derived/,$d' "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
+
+# The chat assistant's secret is one of the secrets: written once, the first
+# time --with-chat is used, and then left alone. It signs the assistant's
+# requests to the reporting platform, so the two must hold the same value.
+if [[ -n "$WITH_CHAT" ]] && ! grep -q '^CHAT_BRIDGE_SECRET=' "$ENV_FILE"; then
+  echo "CHAT_BRIDGE_SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$ENV_FILE"
+  echo "  wrote CHAT_BRIDGE_SECRET"
+fi
 {
   echo "# --- derived from this run; rewritten on every ./start.sh"
   echo "APP_NAME=${APP_NAME}"
@@ -172,10 +184,17 @@ sed -i.bak '/^# --- derived/,$d' "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
     echo "REPORT_DB_USER=app"
     echo "REPORT_DB_PASSWORD=app"
   fi
+  if [[ -n "$WITH_CHAT" ]]; then
+    # What lets the reporting platform be framed by the assistant, and where it
+    # asks whether the administrator has made the chat the only way in.
+    echo "CHAT_EMBED=1"
+    echo "CHAT_SWITCHES_URL=http://assistant:4200/chat/switches"
+  fi
 } >> "$ENV_FILE"
 
 say "7/7  Building and starting (profile: ${PROFILE})"
-docker compose --env-file "$ENV_FILE" --profile "$PROFILE" up -d --build ${REBUILD:+--no-cache}
+docker compose --env-file "$ENV_FILE" --profile "$PROFILE" ${WITH_CHAT:+--profile chat} \
+  up -d --build ${REBUILD:+--no-cache}
 
 cat <<EOF
 
@@ -184,7 +203,8 @@ cat <<EOF
     ${ORIGIN}/         both applications, and the accounts for each
     ${ORIGIN}/app      the application
     ${ORIGIN}/report   the reports and charts derived from its model
-
+${WITH_CHAT:+    ${ORIGIN}/chat     the assistant: both of the above, by asking (application accounts)
+}
   These are two systems: separate databases, separate user tables, separate
   sign-ins. A role name means "what you may do to a record" in the application
   and "which tables your queries may read" in the reporting platform, so the

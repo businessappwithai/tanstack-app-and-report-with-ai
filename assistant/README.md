@@ -6,10 +6,10 @@ things, and works on the real pages inside the chat. Built on the open-source
 CopilotKit packages (1.87.0) and nothing else from CopilotKit: no Intelligence,
 no cloud, no licence key, telemetry off.
 
-**Status: a checkpoint.** The service runs, is tested and has been driven in a
-browser against stand-ins for the two products. It is **not yet wired into
-`docker-compose.yml`, nginx or `start.sh`**, and the two products do not yet
-have the pieces it needs from them (below). `../openbotcompat.md` is the plan.
+**Status.** The service runs, is tested, and is wired into the orchestrator behind
+`./start.sh --with-chat`. A composed run has not been made yet, and the generated
+application does not yet have its side (embed mode and the administrator's two
+switches). `../openbotcompat.md` is the plan and says what is done.
 
 ## What holds today
 
@@ -32,10 +32,9 @@ have the pieces it needs from them (below). `../openbotcompat.md` is the plan.
 
 | Where | What |
 |---|---|
-| Reporting platform | `POST /api/auth/delegate`, `GET /api/search`, embed mode, frame headers |
 | Generated application | embed mode, the two switches (`CHAT_ENABLED`, `CHAT_ONLY_MODE`) in `/api/sys/app-info`, the chat-only redirect |
-| Orchestrator | compose service, nginx `location /chat/`, `start.sh --with-chat`, landing page, CI |
-| Here | conversations and tickets in the assistant's database (both are in memory now, so one replica and lost on restart); create/update/action-button tools with confirmation; rate limits |
+| Orchestrator | move the reporting pin once its side is merged; a composed run; `build-and-run.yml` |
+| Here | conversations and tickets in the database (both are in memory now, so one replica and lost on restart); create/update/action-button tools with confirmation; rate limits |
 
 ## Run it
 
@@ -60,4 +59,4 @@ model's judgement.
 | `CHAT_BRIDGE_SECRET` | required in production | Shared with both products; signs delegation and the embed cookie. Generate once |
 | `PUBLIC_ORIGIN` | `http://localhost` | The origin a browser sees |
 | `AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY` | the local endpoint | Any OpenAI-compatible endpoint whose model supports tool calling |
-| `CHAT_DATABASE_URL` | unset | The audit trail's database; in memory without it |
+| `CHAT_DATABASE_URL` | unset | The audit trail's database, created if missing; in memory without the variable |

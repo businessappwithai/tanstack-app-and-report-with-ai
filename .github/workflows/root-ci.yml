@@ -69,6 +69,7 @@ on:
     branches: [main]
     paths:
       - "common/**"
+      - "assistant/**"
       - "deps.json"
       - "deps.sh"
       - "docker-compose.yml"
@@ -78,6 +79,7 @@ on:
   pull_request:
     paths:
       - "common/**"
+      - "assistant/**"
       - "deps.json"
       - "deps.sh"
       - "docker-compose.yml"
@@ -398,3 +400,34 @@ jobs:
       # job went green.
       - name: Run every derived query
         run: bun run check:pack:ci
+
+  # The chat assistant is its own package with its own lockfile: nothing under
+  # common/ imports it and it imports nothing from there. Its tests run against
+  # stand-ins for the two products and a scripted model, so this needs neither
+  # checkout, a database nor a key.
+  assistant:
+    name: Chat assistant
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: assistant
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Type-check and tests
+        run: bun run check:all
+
+      # The client is built for its URL prefix; a build that fails here would
+      # otherwise first fail inside `docker compose up --build`.
+      - name: Build the client
+        run: bun run build
+

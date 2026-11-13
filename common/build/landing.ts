@@ -82,7 +82,7 @@ function accountRows(roles: AccessRoleSpec[], entityTotal: number): string {
     .join("\n");
 }
 
-export function renderLanding(pack: Pack, origin: string): string {
+export function renderLanding(pack: Pack, origin: string, chat = false): string {
   const roles = pack.access?.roles ?? [];
   // Stated by the pack. The fallback is for a pack built before it was, and
   // widens to the broadest role rather than claiming a total it cannot know.
@@ -174,7 +174,17 @@ export function renderLanding(pack: Pack, origin: string): string {
       <span class="path">${esc(origin)}/report</span>
       <p>The reporting platform, already holding that database as a data source with its schema introspected and a reporting layer built from the same model.</p>
       <span class="meta">${esc(counts)} · a separate database and a separate sign-in.</span>
-    </a>
+    </a>${
+      chat
+        ? `
+    <a class="door" href="/chat/">
+      <h2>The assistant</h2>
+      <span class="path">${esc(origin)}/chat</span>
+      <p>Both of the above, by asking: find a record or a report and it opens beside the conversation. What you can reach is what your application account can reach.</p>
+      <span class="meta">Sign in with an <b>application</b> account. It has no accounts of its own.</span>
+    </a>`
+        : ""
+    }
   </div>
 
   <div class="note">
@@ -226,9 +236,10 @@ function main(): number {
   const input = flag("-i") ?? flag("--input");
   const output = flag("-o") ?? flag("--output") ?? ".";
   const origin = flag("--origin") ?? "http://localhost";
+  const chat = argv.includes("--chat");
 
   if (!input) {
-    console.error("usage: landing.ts -i <pack.json> [-o dir] [--origin http://localhost]");
+    console.error("usage: landing.ts -i <pack.json> [-o dir] [--origin http://localhost] [--chat]");
     return 2;
   }
   if (!existsSync(input)) {
@@ -239,7 +250,7 @@ function main(): number {
   const pack: Pack = JSON.parse(readFileSync(input, "utf8"));
   mkdirSync(path.resolve(output), { recursive: true });
   const target = path.join(path.resolve(output), "index.html");
-  writeFileSync(target, renderLanding(pack, origin));
+  writeFileSync(target, renderLanding(pack, origin, chat));
 
   const roles = pack.access?.roles.length ?? 0;
   console.log(`  front door: ${roles} role(s), both sign-ins`);

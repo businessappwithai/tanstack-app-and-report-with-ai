@@ -230,7 +230,7 @@ export async function delegateReportSession(
     },
     60
   );
-  const response = await fetch(`${config.reportUrl}${config.reportBasePath}/api/auth/delegate`, {
+  const response = await fetch(`${config.reportUrl}${config.reportBasePath}/api/chat/delegate`, {
     method: "POST",
     headers: { "content-type": "application/json", origin: config.publicOrigin },
     body: JSON.stringify({ assertion }),

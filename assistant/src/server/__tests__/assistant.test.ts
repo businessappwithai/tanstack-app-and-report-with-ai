@@ -209,6 +209,12 @@ describe("administrator control", () => {
     offApp.stop(true);
   });
 
+  test("the switches are relayed without a session, and say nothing else", async () => {
+    await as("tok-agent", "/api/session");
+    const response = await as(null, "/switches");
+    expect(await response.json()).toEqual({ enabled: true, chatOnly: false });
+  });
+
   test("the audit trail is the administrator's", async () => {
     expect((await as("tok-agent", "/api/audit")).status).toBe(403);
     expect((await as("tok-admin", "/api/audit")).status).toBe(200);

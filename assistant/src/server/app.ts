@@ -4,6 +4,7 @@
  * Everything is under the base path (`/chat`):
  *
  *   GET  /chat/healthz              liveness, no session
+ *   GET  /chat/switches             the administrator's two switches, for the reporting platform
  *   ALL  /chat/api/auth/*           the generated application's own sign-in, passed through
  *   GET  /chat/api/session          who is signed in, and the administrator's two switches
  *   POST /chat/api/tickets          exchange an intent for a single-use ticket
@@ -74,6 +75,9 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
   // Short caches: a role taken away, or the feature switched off, takes effect within seconds.
   const people = new Map<string, { until: number; caller: Caller | null }>();
   const reportSessions = new Map<string, ReportSession>();
+  // The switches as last read from the application. Reading them needs somebody's session, so
+  // this is "as of the last signed-in request"; before the first one, nothing is locked.
+  let lastSwitches = { enabled: true, chatOnly: false };
 
   async function identify(request: Request): Promise<Caller | null> {
     const cookie = request.headers.get("cookie") ?? "";
@@ -83,6 +87,7 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
     const app = new AppClient(config, cookie);
     const person = await app.me();
     const caller = person ? { person, cookie, switches: await app.switches() } : null;
+    if (caller) lastSwitches = { enabled: caller.switches.enabled, chatOnly: caller.switches.chatOnly };
     people.set(cookie, { until: Date.now() + 15_000, caller });
     if (people.size > 5000) people.clear();
     return caller;
@@ -170,6 +175,8 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
     const path = url.pathname.slice(base.length) || "/";
 
     if (path === "/healthz") return json({ ok: true });
+    // Two booleans and nothing about anybody: the reporting platform asks without a session.
+    if (path === "/switches") return json(lastSwitches);
 
     if (path.startsWith("/api/auth/")) {
       return passAuthThrough(request, path.slice("/api/auth/".length), url.search);
