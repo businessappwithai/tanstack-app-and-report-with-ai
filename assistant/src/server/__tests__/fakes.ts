@@ -111,7 +111,8 @@ export function startFakeApp(switches: { chatEnabled?: boolean; chatOnlyMode?: b
         const rows = RECORDS[table] ?? [];
         if (id && request.method === "PATCH") {
           const ifMatch = request.headers.get("if-match");
-          if (ifMatch !== '"1"') return json({ message: "VERSION_CONFLICT" }, 409);
+          const current = rows.find((candidate) => candidate.id === id)?.version ?? 1;
+          if (ifMatch !== `"${current}"`) return json({ message: "VERSION_CONFLICT" }, 409);
           writes.push({ method: "PATCH", path, ifMatch, body: await request.json(), user: user.email });
           return json({ data: { id } });
         }

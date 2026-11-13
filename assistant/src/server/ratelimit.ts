@@ -42,8 +42,14 @@ export class RateLimiter {
   }
 }
 
-/** The caller's address as the proxy in front of the assistant reports it. */
+/**
+ * The caller's address, from what the proxy itself set. nginx writes `X-Real-IP` from the connection
+ * and appends the connection's address to `X-Forwarded-For`, keeping whatever the client sent before
+ * it — so the first forwarded entry is the client's to choose, and only the last is the proxy's.
+ */
 export function clientAddress(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwarded || request.headers.get("x-real-ip") || "unknown";
+  const real = request.headers.get("x-real-ip")?.trim();
+  if (real) return real;
+  const hops = request.headers.get("x-forwarded-for")?.split(",") ?? [];
+  return hops.at(-1)?.trim() || "unknown";
 }

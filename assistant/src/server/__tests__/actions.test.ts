@@ -7,7 +7,7 @@ import { AppClient } from "../products";
 import { RateLimiter } from "../ratelimit";
 import { buildTools } from "../tools";
 import { MemoryTicketStore, TicketService } from "../tickets";
-import { SECRET, startFakeApp, startFakeReport, writes } from "./fakes";
+import { RECORDS, SECRET, startFakeApp, startFakeReport, writes } from "./fakes";
 
 const app = startFakeApp();
 const report = startFakeReport();
@@ -73,6 +73,24 @@ describe("proposed changes", () => {
     expect((await r.audit.recent(10)).map((e) => e.tool)).toContain("confirm_move");
   });
 
+  test("a proposal is held to the version it was made at: a record saved since is refused", async () => {
+    const r = rig();
+    writes.length = 0;
+    const tools = r.toolsFor("tok-sales", "sales.manager@crm.example.com");
+    const { proposal } = await call(tools, "propose_update", { object: "bus_account", id: "a1", title: "Acme", changes: { industry: "Retail" } });
+    // Somebody else saves the record before the person presses Confirm.
+    const row = RECORDS.bus_account?.[0] as Record<string, unknown>;
+    row.version = 2;
+    try {
+      const refused = await r.post("tok-sales", `/api/actions/${proposal.id}/confirm`);
+      expect(refused.status).toBe(422);
+      expect(((await refused.json()) as { message: string }).message).toContain("VERSION_CONFLICT");
+      expect(writes).toHaveLength(0);
+    } finally {
+      row.version = 1;
+    }
+  });
+
   test("a move the person has no button for is never proposed", async () => {
     const r = rig();
     const tools = r.toolsFor("tok-admin", "admin@admin.com");
@@ -127,7 +145,7 @@ describe("proposed changes", () => {
   test("an expired proposal is gone", () => {
     let now = 0;
     const store = new ActionStore(300, () => now);
-    const action = store.propose("a@b.c", { kind: "update", object: "bus_account", id: "a1", title: "x", changes: { a: "b" } });
+    const action = store.propose("a@b.c", { kind: "update", object: "bus_account", id: "a1", title: "x", changes: { a: "b" }, version: 1 });
     now = 301_000;
     expect(store.take(action.id, "a@b.c")).toBeNull();
   });
@@ -163,13 +181,29 @@ describe("rate limits", () => {
     expect(other.status).toBe(200);
   });
 
+  test("a client cannot pick its own address by sending X-Forwarded-For", async () => {
+    const r = rig({ CHAT_RATE_PER_ADDRESS: "2" });
+    // nginx keeps what the client sent and appends the real address; X-Real-IP is the proxy's own.
+    const get = (spoof: string) =>
+      r.handle(new Request("http://localhost/chat/switches", { headers: { "x-real-ip": "198.51.100.7", "x-forwarded-for": `${spoof}, 198.51.100.7` } }));
+    await get("1.1.1.1");
+    await get("2.2.2.2");
+    expect((await get("3.3.3.3")).status).toBe(429);
+    // Without X-Real-IP, the last entry — the one the proxy appended — counts.
+    const bare = (spoof: string) =>
+      r.handle(new Request("http://localhost/chat/switches", { headers: { "x-forwarded-for": `${spoof}, 198.51.100.8` } }));
+    await bare("4.4.4.4");
+    await bare("5.5.5.5");
+    expect((await bare("6.6.6.6")).status).toBe(429);
+  });
+
   test("callers with no session are limited by address", async () => {
     const r = rig({ CHAT_RATE_PER_ADDRESS: "2" });
-    const get = () => r.handle(new Request("http://localhost/chat/switches", { headers: { "x-forwarded-for": "203.0.113.9" } }));
+    const get = () => r.handle(new Request("http://localhost/chat/switches", { headers: { "x-real-ip": "203.0.113.9" } }));
     await get();
     await get();
     expect((await get()).status).toBe(429);
-    const elsewhere = await r.handle(new Request("http://localhost/chat/switches", { headers: { "x-forwarded-for": "203.0.113.10" } }));
+    const elsewhere = await r.handle(new Request("http://localhost/chat/switches", { headers: { "x-real-ip": "203.0.113.10" } }));
     expect(elsewhere.status).not.toBe(429);
   });
 });

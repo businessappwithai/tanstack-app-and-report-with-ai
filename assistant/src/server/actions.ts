@@ -18,8 +18,8 @@ import { randomToken } from "./signing";
 export type Scalar = string | number | boolean | null;
 
 export type Change =
-  | { kind: "move"; object: string; id: string; event: string; label: string; to: string; title: string }
-  | { kind: "update"; object: string; id: string; changes: Record<string, Scalar>; title: string };
+  | { kind: "move"; object: string; id: string; event: string; label: string; to: string; title: string; version: number }
+  | { kind: "update"; object: string; id: string; changes: Record<string, Scalar>; title: string; version: number };
 
 export interface PendingAction {
   id: string;
@@ -80,14 +80,13 @@ export interface Outcome {
 /** Run a confirmed change as the person. A refusal is reported in the application's own words. */
 export async function execute(app: AppClient, change: Change): Promise<Outcome> {
   try {
-    const record = await app.record(change.object, change.id);
-    const version = Number(record?.version);
-    if (!Number.isInteger(version)) return { ok: false, message: "That record cannot be changed this way." };
+    // The version the record had when it was proposed, not a fresh read: if somebody else saved
+    // or moved it since, the application answers VERSION_CONFLICT and nothing is overwritten.
     if (change.kind === "move") {
-      await app.move(change.object, change.id, change.event, version);
+      await app.move(change.object, change.id, change.event, change.version);
       return { ok: true, message: `Done: ${change.label}.` };
     }
-    await app.update(change.object, change.id, change.changes, version);
+    await app.update(change.object, change.id, change.changes, change.version);
     return { ok: true, message: "Saved." };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Refused";

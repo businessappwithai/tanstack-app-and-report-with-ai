@@ -305,7 +305,9 @@ export function buildTools(ctx: ToolContext) {
           if (!isSafeName(object) || !isSafeId(id)) throw new NotAvailable();
           const move = (await clients.app.actions(object, id)).find((candidate) => candidate.event === event);
           if (!move) throw new NotAvailable();
-          const change: Change = { kind: "move", object, id, event, label: move.label, to: move.to, title };
+          const version = Number((await clients.app.record(object, id))?.version);
+          if (!Number.isInteger(version)) throw new NotAvailable();
+          const change: Change = { kind: "move", object, id, event, label: move.label, to: move.to, title, version };
           const proposal = actions.propose(person.email, change);
           return { awaitingConfirmation: true, proposal: { id: proposal.id, summary: proposal.summary }, note: "Nothing has changed yet. Tell the person to confirm or decline the card." };
         }),
@@ -346,8 +348,10 @@ export function buildTools(ctx: ToolContext) {
             if (typeof value === "string" && value.length > 500) throw new NotAvailable();
             clean[field] = value;
           }
-          await clients.app.record(object, id); // the person must be able to read it at all
-          const proposal = actions.propose(person.email, { kind: "update", object, id, changes: clean, title });
+          // Reading it proves the person may; its version is what the change will be held to.
+          const version = Number((await clients.app.record(object, id))?.version);
+          if (!Number.isInteger(version)) throw new NotAvailable();
+          const proposal = actions.propose(person.email, { kind: "update", object, id, changes: clean, title, version });
           return { awaitingConfirmation: true, proposal: { id: proposal.id, summary: proposal.summary }, note: "Nothing has changed yet. Tell the person to confirm or decline the card." };
         }),
     }),
