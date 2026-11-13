@@ -17,8 +17,7 @@
  *  - forget across a restart. The last reading is kept in the assistant's
  *    database, so a restart comes back knowing what it knew.
  */
-import pg from "pg";
-import { ensureDatabase } from "./audit";
+import type { AssistantDatabase } from "./database";
 
 export interface Switches {
   enabled: boolean;
@@ -42,36 +41,22 @@ export class MemorySwitchStore implements SwitchStore {
   }
 }
 
+const STATE_DDL = `CREATE TABLE IF NOT EXISTS chat_state (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`;
+
 export class PostgresSwitchStore implements SwitchStore {
-  private ready: Promise<void> | null = null;
+  private readonly ensure: () => Promise<void>;
 
-  constructor(
-    private readonly pool: pg.Pool,
-    private readonly createDatabase: () => Promise<void> = async () => undefined
-  ) {}
-
-  private ensure(): Promise<void> {
-    this.ready ??= this.createDatabase()
-      .then(() =>
-        this.pool.query(
-          `CREATE TABLE IF NOT EXISTS chat_state (
-             key TEXT PRIMARY KEY,
-             value JSONB NOT NULL,
-             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-           )`
-        )
-      )
-      .then(() => undefined)
-      .catch((error) => {
-        this.ready = null;
-        throw error;
-      });
-    return this.ready;
+  constructor(private readonly database: AssistantDatabase) {
+    this.ensure = database.prepared(STATE_DDL);
   }
 
   async load(): Promise<Switches | null> {
     await this.ensure();
-    const result = await this.pool.query("SELECT value FROM chat_state WHERE key = 'switches'");
+    const result = await this.database.pool.query("SELECT value FROM chat_state WHERE key = 'switches'");
     const value = result.rows[0]?.value;
     if (!value || typeof value.enabled !== "boolean" || typeof value.chatOnly !== "boolean") return null;
     return { enabled: value.enabled, chatOnly: value.chatOnly };
@@ -79,7 +64,7 @@ export class PostgresSwitchStore implements SwitchStore {
 
   async save(switches: Switches): Promise<void> {
     await this.ensure();
-    await this.pool.query(
+    await this.database.pool.query(
       `INSERT INTO chat_state (key, value) VALUES ('switches', $1::jsonb)
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
       [JSON.stringify(switches)]
@@ -87,9 +72,6 @@ export class PostgresSwitchStore implements SwitchStore {
   }
 }
 
-export function createSwitchStore(databaseUrl: string | null): SwitchStore {
-  if (!databaseUrl) return new MemorySwitchStore();
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 2 });
-  pool.on("error", () => undefined);
-  return new PostgresSwitchStore(pool, () => ensureDatabase(databaseUrl));
+export function createSwitchStore(database: AssistantDatabase | null): SwitchStore {
+  return database ? new PostgresSwitchStore(database) : new MemorySwitchStore();
 }
