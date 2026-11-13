@@ -90,13 +90,19 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
   const same = (a: Switches | null, b: Switches): boolean =>
     a !== null && a.enabled === b.enabled && a.chatOnly === b.chatOnly;
 
+  // Saves run one after another, so the last one written is the last one read. Until a
+  // write lands, what is stored is unknown; and it counts as saved only if it is still the
+  // latest reading, or a slower, older save could finish last and be believed.
+  let saving: Promise<void> = Promise.resolve();
+
   const rememberSwitches = (next: Switches): void => {
     lastSwitches = next;
     if (same(savedSwitches, next)) return;
-    void switchStore
-      .save(next)
+    savedSwitches = null;
+    saving = saving
+      .then(() => switchStore.save(next))
       .then(() => {
-        savedSwitches = next;
+        if (lastSwitches === next) savedSwitches = next;
       })
       .catch(() => undefined);
   };

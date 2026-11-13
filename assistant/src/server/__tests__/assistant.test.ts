@@ -278,6 +278,44 @@ describe("administrator control", () => {
     lockedApp.stop(true);
   });
 
+  test("overlapping saves end with the latest reading stored", async () => {
+    const changing = { chatOnlyMode: false };
+    const app2 = startFakeApp(changing);
+    const written: boolean[] = [];
+    const releases: Array<() => void> = [];
+    const store = {
+      load: async () => null,
+      // Each save waits to be released, so the test decides the order they finish in.
+      save: (value: { enabled: boolean; chatOnly: boolean }) =>
+        new Promise<void>((resolve) =>
+          releases.push(() => {
+            written.push(value.chatOnly);
+            resolve();
+          })
+        ),
+    };
+    const assistant = createAssistant({
+      config: { ...config, appApiUrl: `http://127.0.0.1:${app2.port}` },
+      audit: new MemoryAuditLog(),
+      tickets: new TicketService(new MemoryTicketStore(), 60),
+      switches: store,
+    });
+    const session = (token: string) =>
+      assistant(
+        new Request("http://localhost/chat/api/session", { headers: { cookie: `crm_app.session_token=${token}` } })
+      );
+
+    await session("tok-agent"); // reads "off"; its save is pending
+    changing.chatOnlyMode = true;
+    await session("tok-sales"); // reads "on" while the first save is still running
+    while (releases.length > 0 || written.length < 2) {
+      releases.shift()?.();
+      await Bun.sleep(1);
+    }
+    expect(written).toEqual([false, true]);
+    app2.stop(true);
+  });
+
   test("a reading taken while the stored one loads is not overwritten by it", async () => {
     const lockedApp = startFakeApp({ chatOnlyMode: true });
     let release: (value: { enabled: boolean; chatOnly: boolean }) => void = () => undefined;
