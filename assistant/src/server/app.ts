@@ -83,15 +83,30 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
   const switchStore = deps.switches ?? new MemorySwitchStore();
   let lastSwitches: Switches | null = null;
 
+  // What is known to be written down. Compared against this, not against memory: a save that
+  // failed must be tried again at the next reading, or a restart would come back with the
+  // older row and report it as known.
+  let savedSwitches: Switches | null = null;
+  const same = (a: Switches | null, b: Switches): boolean =>
+    a !== null && a.enabled === b.enabled && a.chatOnly === b.chatOnly;
+
   const rememberSwitches = (next: Switches): void => {
-    if (lastSwitches?.enabled === next.enabled && lastSwitches.chatOnly === next.chatOnly) return;
     lastSwitches = next;
-    void switchStore.save(next).catch(() => undefined);
+    if (same(savedSwitches, next)) return;
+    void switchStore
+      .save(next)
+      .then(() => {
+        savedSwitches = next;
+      })
+      .catch(() => undefined);
   };
 
   /** What this process knows, else what the last one wrote down, else nothing. */
   const knownSwitches = async (): Promise<Switches | null> => {
-    lastSwitches ??= await switchStore.load().catch(() => null);
+    if (lastSwitches) return lastSwitches;
+    const stored = await switchStore.load().catch(() => null);
+    // A reading taken while the load was pending is newer than anything stored.
+    lastSwitches ??= stored;
     return lastSwitches;
   };
 

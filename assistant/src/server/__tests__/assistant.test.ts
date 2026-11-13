@@ -244,6 +244,62 @@ describe("administrator control", () => {
     lockedApp.stop(true);
   });
 
+  test("a reading that could not be written down is written at the next one", async () => {
+    const lockedApp = startFakeApp({ chatOnlyMode: true });
+    const inner = new MemorySwitchStore();
+    let failing = true;
+    const flaky = {
+      load: () => inner.load(),
+      save: async (value: { enabled: boolean; chatOnly: boolean }) => {
+        if (failing) throw new Error("database unreachable");
+        await inner.save(value);
+      },
+    };
+    const assistant = createAssistant({
+      config: { ...config, appApiUrl: `http://127.0.0.1:${lockedApp.port}` },
+      audit: new MemoryAuditLog(),
+      tickets: new TicketService(new MemoryTicketStore(), 60),
+      switches: flaky,
+    });
+    const session = (token: string) =>
+      assistant(
+        new Request("http://localhost/chat/api/session", { headers: { cookie: `crm_app.session_token=${token}` } })
+      );
+
+    await session("tok-agent");
+    await Bun.sleep(5);
+    expect(await inner.load()).toBeNull();
+
+    failing = false;
+    // A different person, so the reading is taken again rather than served from the cache.
+    await session("tok-sales");
+    await Bun.sleep(5);
+    expect(await inner.load()).toEqual({ enabled: true, chatOnly: true });
+    lockedApp.stop(true);
+  });
+
+  test("a reading taken while the stored one loads is not overwritten by it", async () => {
+    const lockedApp = startFakeApp({ chatOnlyMode: true });
+    let release: (value: { enabled: boolean; chatOnly: boolean }) => void = () => undefined;
+    const slow = {
+      load: () => new Promise<{ enabled: boolean; chatOnly: boolean }>((resolve) => (release = resolve)),
+      save: async () => undefined,
+    };
+    const assistant = createAssistant({
+      config: { ...config, appApiUrl: `http://127.0.0.1:${lockedApp.port}` },
+      audit: new MemoryAuditLog(),
+      tickets: new TicketService(new MemoryTicketStore(), 60),
+      switches: slow,
+    });
+    const pending = assistant(new Request("http://localhost/chat/switches"));
+    await assistant(
+      new Request("http://localhost/chat/api/session", { headers: { cookie: "crm_app.session_token=tok-agent" } })
+    );
+    release({ enabled: true, chatOnly: false });
+    expect(await (await pending).json()).toEqual({ known: true, enabled: true, chatOnly: true });
+    lockedApp.stop(true);
+  });
+
   test("the audit trail is the administrator's", async () => {
     expect((await as("tok-agent", "/api/audit")).status).toBe(403);
     expect((await as("tok-admin", "/api/audit")).status).toBe(200);
