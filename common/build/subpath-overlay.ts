@@ -33,7 +33,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-interface Patch {
+export interface Patch {
   file: string;
   /** Skip when already applied. */
   done: (src: string) => boolean;
@@ -44,16 +44,34 @@ interface Patch {
 
 const MARKER = "/* subpath-overlay */";
 
-const PATCHES: Patch[] = [
+/**
+ * Where a Vite config's options object begins, in either of the two shapes the reporting
+ * application has used:
+ *
+ *   export default defineConfig({                      the object form
+ *   export default defineConfig(({ mode }) => ({       the function form, which it moved to
+ *                                                      when it began reading `mode`
+ *
+ * The overlay anchored on the first only, so when the reporting application changed shape
+ * the image build failed at this step — and nothing here ran it, because the only caller
+ * is the Docker build. `check:overlay` holds both.
+ */
+const VITE_OPTIONS_START =
+  /export default defineConfig\(\s*(?:\([^)]*\)\s*=>\s*\(\s*)?\{/;
+
+export const PATCHES: Patch[] = [
   // --- Vite, as the reporting application configures it ---------------------
   {
     file: "vite.config.ts",
     optional: true,
     done: (s) => s.includes(MARKER),
     apply: (s, base) => {
-      const anchor = "export default defineConfig({";
-      if (!s.includes(anchor)) throw new Error("vite.config.ts: no defineConfig({ to anchor on");
-      return s.replace(anchor, `${anchor}\n  ${MARKER} base: ${JSON.stringify(`${base}/`)},`);
+      const found = VITE_OPTIONS_START.exec(s);
+      if (!found) {
+        throw new Error("vite.config.ts: no defineConfig({ or defineConfig(() => ({ to anchor on");
+      }
+      const end = found.index + found[0].length;
+      return `${s.slice(0, end)}\n  ${MARKER} base: ${JSON.stringify(`${base}/`)},${s.slice(end)}`;
     },
   },
 
@@ -346,4 +364,4 @@ function main(): number {
   return 0;
 }
 
-process.exit(main());
+if (import.meta.main) process.exit(main());
