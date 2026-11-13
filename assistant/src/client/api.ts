@@ -68,3 +68,24 @@ export async function ticketFor(intent: Intent): Promise<string | null> {
 
 export const intentKey = (intent: Intent): string =>
   `${intent.product}:${intent.kind}:${intent.object}:${intent.id ?? ""}`;
+
+export interface Decision {
+  ok: boolean;
+  message: string;
+}
+
+/** The person's own press on a proposal card. Nothing the model says can stand in for it. */
+export async function decide(id: string, verb: "confirm" | "decline"): Promise<Decision> {
+  try {
+    const response = await fetch(`${BASE}/api/actions/${encodeURIComponent(id)}/${verb}`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    const body = (await response.json().catch(() => ({}))) as { message?: string; error?: string };
+    return { ok: response.ok, message: body.message ?? body.error ?? (response.ok ? "Done." : "Refused.") };
+  } catch {
+    return { ok: false, message: "The assistant could not be reached." };
+  }
+}

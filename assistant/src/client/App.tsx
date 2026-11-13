@@ -1,7 +1,7 @@
 import { CopilotChat, CopilotKitProvider, useRenderTool } from "@copilotkit/react-core/v2";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { BASE, type Intent, loadSession, type Session, type SessionState, signIn, signOut } from "./api";
+import { BASE, decide, type Decision, type Intent, loadSession, type Session, type SessionState, signIn, signOut } from "./api";
 import { useWorkspace, Workspace, WorkspaceProvider } from "./Workspace";
 
 const OPEN_TOOLS = ["open_record", "open_page", "open_report"] as const;
@@ -46,7 +46,58 @@ function OpenedChip({ result }: { result: unknown }) {
   );
 }
 
+/** A change the assistant proposes. It runs only when this card's Confirm is pressed. */
+function ProposalCard({ result }: { result: unknown }) {
+  const parsed = parseResult(result);
+  const proposal: { id: string; summary: string } | null = parsed?.awaitingConfirmation ? parsed.proposal : null;
+  const [outcome, setOutcome] = useState<Decision | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (!proposal) return <div className="aw-chip aw-chip-refused">Not available to you</div>;
+
+  const press = async (verb: "confirm" | "decline") => {
+    setBusy(true);
+    setOutcome(await decide(proposal.id, verb));
+    setBusy(false);
+  };
+  return (
+    <div className="aw-proposal" role="group" aria-label="Proposed change">
+      <p>{proposal.summary}</p>
+      {outcome ? (
+        <p className={outcome.ok ? "aw-done" : "aw-failed"} role="status">
+          {outcome.message}
+        </p>
+      ) : (
+        <div className="aw-proposal-buttons">
+          <button type="button" disabled={busy} onClick={() => void press("confirm")}>
+            Confirm
+          </button>
+          <button type="button" className="aw-secondary" disabled={busy} onClick={() => void press("decline")}>
+            Decline
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const PROPOSAL_TOOLS = ["propose_move", "propose_update"] as const;
+
 function ToolRenderers() {
+  for (const name of PROPOSAL_TOOLS) {
+    useRenderTool(
+      {
+        name,
+        parameters: z.object({ title: z.string().optional() }).passthrough(),
+        render: (props) =>
+          props.status === "complete" ? (
+            <ProposalCard result={props.result} />
+          ) : (
+            <div className="aw-chip">Preparing a change…</div>
+          ),
+      },
+      []
+    );
+  }
   for (const name of OPEN_TOOLS) {
     // The list is fixed, so the hooks run in the same order on every render.
     useRenderTool(

@@ -67,3 +67,12 @@ button { font: inherit; cursor: pointer; }
   .shell { grid-template: "top" auto "chat" minmax(0, 1fr) "work" minmax(0, 1fr) / minmax(0, 1fr); }
   .chat { border-right: 0; border-bottom: 1px solid var(--aw-line); }
 }
+
+.aw-proposal { border: 1px solid var(--aw-border, #d0d5dd); border-radius: 10px; padding: 0.75rem 1rem; margin: 0.5rem 0; background: var(--aw-surface, #fff); }
+.aw-proposal p { margin: 0 0 0.5rem; }
+.aw-proposal-buttons { display: flex; gap: 0.5rem; }
+.aw-proposal button { padding: 0.4rem 0.9rem; border-radius: 6px; border: 1px solid transparent; background: #2563eb; color: #fff; cursor: pointer; }
+.aw-proposal button.aw-secondary { background: transparent; color: inherit; border-color: var(--aw-border, #d0d5dd); }
+.aw-proposal button:disabled { opacity: 0.6; cursor: default; }
+.aw-done { color: #15803d; }
+.aw-failed { color: #b91c1c; }

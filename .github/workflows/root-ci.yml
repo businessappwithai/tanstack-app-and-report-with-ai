@@ -204,6 +204,12 @@ jobs:
       - name: The protocol document is upstream's, byte for byte
         run: bun run check:protocol
 
+      # The overlay rewrites the reporting application's source by anchors. Only the image
+      # build runs it, so a change in that project's config broke the image with nothing
+      # here to say why. This runs the real patches over each shape the anchors must handle.
+      - name: The sub-path overlay still finds its anchors
+        run: bun run check:overlay
+
       - name: Type-check
         run: bun run type-check
 

@@ -43,6 +43,10 @@ export interface AssistantConfig {
   ticketTtlSeconds: number;
   /** Seconds the embed cookie lasts; the chat page renews it while it is open. */
   embedTtlSeconds: number;
+  /** Seconds a proposed change waits for the person to confirm it. */
+  actionTtlSeconds: number;
+  /** Requests per minute: by signed-in person, and by address when there is no session. 0 = off. */
+  rateLimits: { perUser: number; perAddress: number; modelPerUser: number };
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): AssistantConfig {
@@ -63,5 +67,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     },
     ticketTtlSeconds: Number(env.CHAT_TICKET_TTL_SECONDS ?? 60),
     embedTtlSeconds: Number(env.CHAT_EMBED_TTL_SECONDS ?? 900),
+    actionTtlSeconds: Number(env.CHAT_ACTION_TTL_SECONDS ?? 300),
+    rateLimits: {
+      perUser: Number(env.CHAT_RATE_PER_USER ?? 240),
+      perAddress: Number(env.CHAT_RATE_PER_ADDRESS ?? 60),
+      modelPerUser: Number(env.CHAT_RATE_MODEL_PER_USER ?? 20),
+    },
   };
 }

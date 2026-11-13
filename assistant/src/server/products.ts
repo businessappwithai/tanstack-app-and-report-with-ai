@@ -176,6 +176,33 @@ export class AppClient {
     const body = await this.call(`/bus/${table}/${id}`);
     return body?.data ?? body;
   }
+
+  /** The moves this person may press on the record now. */
+  async actions(table: string, id: string): Promise<{ event: string; to: string; label: string }[]> {
+    const body = await this.call(`/bus/${table}/${id}/actions`);
+    const rows: any[] = Array.isArray(body) ? body : (body?.data ?? []);
+    return rows
+      .filter((row) => typeof row?.event === "string")
+      .map((row) => ({ event: row.event, to: String(row.to ?? ""), label: String(row.label ?? row.event) }));
+  }
+
+  /** Press an action button, naming the version the record was read at. */
+  async move(table: string, id: string, event: string, version: number): Promise<void> {
+    await this.call(`/bus/${table}/${id}/transition`, {
+      method: "POST",
+      headers: { "if-match": `"${version}"` },
+      body: JSON.stringify({ event }),
+    });
+  }
+
+  /** Save some fields, naming the version the record was read at. */
+  async update(table: string, id: string, data: Record<string, unknown>, version: number): Promise<void> {
+    await this.call(`/bus/${table}/${id}`, {
+      method: "PATCH",
+      headers: { "if-match": `"${version}"` },
+      body: JSON.stringify(data),
+    });
+  }
 }
 
 /** The reporting platform, called with a session delegated for one person. */

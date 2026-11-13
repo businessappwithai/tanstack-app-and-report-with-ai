@@ -8,14 +8,15 @@ import { createAssistant } from "./src/server/app";
 import { createAuditLog } from "./src/server/audit";
 import { loadConfig } from "./src/server/config";
 import { openDatabase } from "./src/server/database";
+import { MemoryThreadStore, PostgresThreadStore } from "./src/server/durable";
 import { createSwitchStore } from "./src/server/switches";
-import { MemoryTicketStore, TicketService } from "./src/server/tickets";
+import { MemoryTicketStore, PostgresTicketStore, TicketService } from "./src/server/tickets";
 
 const config = loadConfig();
 const clientDir = resolve(import.meta.dir, "dist/client");
-const tickets = new MemoryTicketStore();
 // One pool for everything the assistant keeps; in memory when no database is configured.
 const database = config.databaseUrl ? openDatabase(config.databaseUrl) : null;
+const tickets = database ? new PostgresTicketStore(database) : new MemoryTicketStore();
 
 /** Framing is for this origin's own pages only; nothing is cached that names a person. */
 const PAGE_HEADERS = {
@@ -45,11 +46,12 @@ const handle = createAssistant({
   config,
   audit: createAuditLog(database),
   switches: createSwitchStore(database),
+  threads: database ? new PostgresThreadStore(database) : new MemoryThreadStore(),
   tickets: new TicketService(tickets, config.ticketTtlSeconds),
   serveClient,
 });
 
-setInterval(() => void tickets.sweep(Date.now()), 30_000).unref();
+setInterval(() => void tickets.sweep(Date.now()).catch(() => undefined), 30_000).unref();
 
 const server = Bun.serve({
   port: config.port,

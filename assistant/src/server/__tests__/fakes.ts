@@ -35,10 +35,10 @@ export const USERS: Record<string, { email: string; name: string; roles: string[
 
 export const RECORDS: Record<string, Array<Record<string, unknown>>> = {
   bus_account: [
-    { id: "a1", name: "Acme Corporation", industry: "Manufacturing" },
+    { id: "a1", name: "Acme Corporation", industry: "Manufacturing", version: 1 },
     { id: "a2", name: "Globex", industry: "Energy" },
   ],
-  bus_opportunity: [{ id: "o1", name: "Acme renewal", amount: 120000, stage: "negotiation" }],
+  bus_opportunity: [{ id: "o1", name: "Acme renewal", amount: 120000, stage: "negotiation", version: 1 }],
   bus_ticket: [{ id: "t1", subject: "Acme cannot sign in", status: "open" }],
 };
 
@@ -56,10 +56,13 @@ const sessionOf = (request: Request) => {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
+/** Writes the fake application accepted, so a test can see what ran and with which version. */
+export const writes: Array<{ method: string; path: string; ifMatch: string | null; body: unknown; user: string }> = [];
+
 export function startFakeApp(switches: { chatEnabled?: boolean; chatOnlyMode?: boolean } = {}) {
   return Bun.serve({
     port: 0,
-    fetch(request) {
+    async fetch(request) {
       const url = new URL(request.url);
       const path = url.pathname;
       if (path === "/api/auth/sign-in/email" && request.method === "POST") {
@@ -86,11 +89,33 @@ export function startFakeApp(switches: { chatEnabled?: boolean; chatOnlyMode?: b
       if (path === "/api/sys/tables") {
         return json({ data: user.reads.map((table) => ({ table_name: table, name: LABELS[table] })) });
       }
+      const move = /^\/api\/bus\/([a-z_]+)\/([A-Za-z0-9_-]+)\/(actions|transition)$/.exec(path);
+      if (move) {
+        const [, table = "", id = "", what] = move;
+        if (!user.reads.includes(table)) return json({ message: "Forbidden" }, 403);
+        // Only the sales manager holds the Approve button, as a %%rbac line would give it.
+        const mayApprove = table === "bus_opportunity" && user.roles.includes("sales_manager");
+        if (what === "actions") {
+          return json(mayApprove ? [{ event: "approve", to: "approved", label: "Approve" }] : []);
+        }
+        if (!mayApprove) return json({ message: "TRANSITION_FORBIDDEN" }, 403);
+        const ifMatch = request.headers.get("if-match");
+        if (ifMatch !== '"1"') return json({ message: "VERSION_CONFLICT" }, 409);
+        writes.push({ method: "POST", path, ifMatch, body: await request.json(), user: user.email });
+        return json({ data: { id, stage: "approved" } });
+      }
       const bus = /^\/api\/bus\/([a-z_]+)(?:\/([A-Za-z0-9_-]+))?$/.exec(path);
       if (bus) {
         const [, table = "", id] = bus;
         if (!user.reads.includes(table)) return json({ message: "Forbidden" }, 403);
         const rows = RECORDS[table] ?? [];
+        if (id && request.method === "PATCH") {
+          const ifMatch = request.headers.get("if-match");
+          const current = rows.find((candidate) => candidate.id === id)?.version ?? 1;
+          if (ifMatch !== `"${current}"`) return json({ message: "VERSION_CONFLICT" }, 409);
+          writes.push({ method: "PATCH", path, ifMatch, body: await request.json(), user: user.email });
+          return json({ data: { id } });
+        }
         if (id) {
           const row = rows.find((candidate) => candidate.id === id);
           return row ? json({ data: row }) : json({ message: "Not found" }, 404);
