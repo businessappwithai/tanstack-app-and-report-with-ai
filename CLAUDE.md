@@ -593,7 +593,7 @@ it derives from the run. `build-and-run.yml` uses exactly that.
 reaches both applications by asking, and works on the real pages in a frame beside the conversation.
 It is **ours, and lives here** — `assistant/` is a package with its own lockfile, not a pinned
 checkout — and it is built on the open-source CopilotKit packages only (1.87.0; no Intelligence, no
-cloud, telemetry off). `openbotcompat.md` is the design and what is still to do; `assistant/README.md`
+cloud, telemetry off). `assistant/PLAN.md` is the design and what is still to do; `assistant/README.md`
 is how to run it alone.
 
 What to keep true when touching it:
@@ -613,8 +613,10 @@ What to keep true when touching it:
 - **Its audit database (`chatdb`) is created by the assistant itself** when missing, because
   `pg-init` runs only on a fresh volume and a deployment that predates the assistant has none.
 - **Two switches belong to the generated application's administrator** (`CHAT_ENABLED`,
-  `CHAT_ONLY_MODE` in `sys_system`); the assistant relays them at `/chat/switches`. An application
-  generated before they existed has neither, and the assistant then treats itself as enabled.
+  `CHAT_ONLY_MODE` in `sys_system`); the assistant relays its last reading at `/chat/switches`, keeps
+  it in `chatdb` across restarts, and answers 503 until it has one — "not known yet" must never read
+  as "off", or every restart would lift the administrator's lock on `/report`. An application
+  generated before the switches existed has neither, and the assistant then treats itself as enabled.
 - `root-ci.yml` has a job for it (`Chat assistant`); `build-and-run.yml` does not start it yet.
 
 ### Logging, errors and tracing — the products' own, passed through

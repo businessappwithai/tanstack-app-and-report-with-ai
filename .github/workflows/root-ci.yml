@@ -414,14 +414,16 @@ jobs:
         working-directory: assistant
 
     steps:
-      - uses: actions/checkout@v4
+      # Pinned to commits, not tags: a tag can be moved to different code.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install
-        run: bun install --frozen-lockfile
+        # --ignore-scripts: no dependency here needs a lifecycle script, so none gets to run one.
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Type-check and tests
         run: bun run check:all

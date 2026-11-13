@@ -7,6 +7,7 @@ import { join, normalize, resolve } from "node:path";
 import { createAssistant } from "./src/server/app";
 import { createAuditLog } from "./src/server/audit";
 import { loadConfig } from "./src/server/config";
+import { createSwitchStore } from "./src/server/switches";
 import { MemoryTicketStore, TicketService } from "./src/server/tickets";
 
 const config = loadConfig();
@@ -40,6 +41,7 @@ function serveClient(_request: Request, path: string): Response {
 const handle = createAssistant({
   config,
   audit: createAuditLog(config.databaseUrl),
+  switches: createSwitchStore(config.databaseUrl),
   tickets: new TicketService(tickets, config.ticketTtlSeconds),
   serveClient,
 });

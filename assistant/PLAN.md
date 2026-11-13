@@ -1,4 +1,4 @@
-# A chat front door to the generated application and Enterprise Reporting, on open-source CopilotKit
+# The assistant: a chat front door to the generated application and Enterprise Reporting
 
 ## Context
 
@@ -8,16 +8,12 @@ either product by natural language, finds a record or document, and works on it 
 page embedded in the chat. Access must be exactly what the generated application's `%%rbac` gives that
 user; the embedded address must be opaque; an administrator turns it on and can make chat the only way in.
 
-**Revised direction (your last instruction):** OpenBot is removed completely. We build our own
-assistant, similar in purpose, on the **open-source CopilotKit packages only**, at their latest release.
-No CopilotKit Intelligence, no CopilotKit cloud, no licence key, no third-party checkout.
+It is our own service, built on the **open-source CopilotKit packages only**, at their latest release:
+no CopilotKit Intelligence, no CopilotKit cloud, no licence key, no third-party checkout.
 
-Decisions carried over: opaque single-use tickets plus lock-down (no per-path encryption); in chat-only
-mode administrators keep direct access. The earlier Intelligence and source-pinning decisions no longer
-apply.
-
-Assumption to confirm: the code lives in **`assistant/`** in `tanstack-app-and-report-with-ai`. You asked
-for `openbot/` when it was OpenBot; say so if you want that name kept.
+Decisions taken: opaque single-use tickets plus lock-down (no per-path encryption); in chat-only mode
+administrators keep direct access; the service is called the assistant and everything of its own lives
+in `assistant/` in `tanstack-app-and-report-with-ai`, this document included.
 
 ## Patterns followed
 
@@ -105,7 +101,7 @@ assistant relays to the browser. `decideQueryRun` and `validateQueryAccess` then
   chat frame with a valid embed cookie, and redirect to `/chat`. Administrators are exempt.
 - Whether the container exists is a deployment choice: `./start.sh --with-chat`.
 
-**"Similar to OpenBot" — what is in and what is not.**
+**What is in and what is not.**
 - In: multiple saved conversations, generative UI cards (record, table, chart, approval), saved prompts
   per user, an audit trail of every tool call, an admin page (usage, audit, model settings).
 - Later, if you want it: scheduled routines that run as their creator.

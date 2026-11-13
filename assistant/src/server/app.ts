@@ -4,7 +4,7 @@
  * Everything is under the base path (`/chat`):
  *
  *   GET  /chat/healthz              liveness, no session
- *   GET  /chat/switches             the administrator's two switches, for the reporting platform
+ *   GET  /chat/switches             the administrator's two switches as last read (503 until known)
  *   ALL  /chat/api/auth/*           the generated application's own sign-in, passed through
  *   GET  /chat/api/session          who is signed in, and the administrator's two switches
  *   POST /chat/api/tickets          exchange an intent for a single-use ticket
@@ -36,6 +36,7 @@ import {
 } from "./products";
 import { type Clients, NotAvailable, resolveIntent } from "./registry";
 import { signStatement } from "./signing";
+import { MemorySwitchStore, type Switches, type SwitchStore } from "./switches";
 import type { Intent, TicketService } from "./tickets";
 import { buildTools, SYSTEM_PROMPT } from "./tools";
 
@@ -45,6 +46,8 @@ export interface AssistantDeps {
   config: AssistantConfig;
   tickets: TicketService;
   audit: AuditLog;
+  /** Where the last reading of the administrator's switches is kept; in memory when absent. */
+  switches?: SwitchStore;
   /** Serves the built client; absent in tests. */
   serveClient?: (request: Request, path: string) => Promise<Response> | Response;
   /** Replaces the language model; the tests pass a scripted one. */
@@ -75,9 +78,22 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
   // Short caches: a role taken away, or the feature switched off, takes effect within seconds.
   const people = new Map<string, { until: number; caller: Caller | null }>();
   const reportSessions = new Map<string, ReportSession>();
-  // The switches as last read from the application. Reading them needs somebody's session, so
-  // this is "as of the last signed-in request"; before the first one, nothing is locked.
-  let lastSwitches = { enabled: true, chatOnly: false };
+  // The switches as last read from the application; null until one is known. See switches.ts
+  // for why "not known yet" is never reported as "off".
+  const switchStore = deps.switches ?? new MemorySwitchStore();
+  let lastSwitches: Switches | null = null;
+
+  const rememberSwitches = (next: Switches): void => {
+    if (lastSwitches?.enabled === next.enabled && lastSwitches.chatOnly === next.chatOnly) return;
+    lastSwitches = next;
+    void switchStore.save(next).catch(() => undefined);
+  };
+
+  /** What this process knows, else what the last one wrote down, else nothing. */
+  const knownSwitches = async (): Promise<Switches | null> => {
+    lastSwitches ??= await switchStore.load().catch(() => null);
+    return lastSwitches;
+  };
 
   async function identify(request: Request): Promise<Caller | null> {
     const cookie = request.headers.get("cookie") ?? "";
@@ -87,7 +103,7 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
     const app = new AppClient(config, cookie);
     const person = await app.me();
     const caller = person ? { person, cookie, switches: await app.switches() } : null;
-    if (caller) lastSwitches = { enabled: caller.switches.enabled, chatOnly: caller.switches.chatOnly };
+    if (caller) rememberSwitches({ enabled: caller.switches.enabled, chatOnly: caller.switches.chatOnly });
     people.set(cookie, { until: Date.now() + 15_000, caller });
     if (people.size > 5000) people.clear();
     return caller;
@@ -176,7 +192,11 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
 
     if (path === "/healthz") return json({ ok: true });
     // Two booleans and nothing about anybody: the reporting platform asks without a session.
-    if (path === "/switches") return json(lastSwitches);
+    // 503 until a reading exists, so "not known yet" is never taken for "off".
+    if (path === "/switches") {
+      const known = await knownSwitches();
+      return known ? json({ known: true, ...known }) : json({ known: false }, 503);
+    }
 
     if (path.startsWith("/api/auth/")) {
       return passAuthThrough(request, path.slice("/api/auth/".length), url.search);

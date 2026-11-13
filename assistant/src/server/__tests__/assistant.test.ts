@@ -3,6 +3,7 @@ import { createAssistant, EMBED_COOKIE } from "../app";
 import { MemoryAuditLog } from "../audit";
 import { loadConfig } from "../config";
 import { verifyStatement } from "../signing";
+import { MemorySwitchStore } from "../switches";
 import { MemoryTicketStore, TicketService } from "../tickets";
 import { SECRET, startFakeApp, startFakeModel, startFakeReport } from "./fakes";
 
@@ -212,7 +213,35 @@ describe("administrator control", () => {
   test("the switches are relayed without a session, and say nothing else", async () => {
     await as("tok-agent", "/api/session");
     const response = await as(null, "/switches");
-    expect(await response.json()).toEqual({ enabled: true, chatOnly: false });
+    expect(await response.json()).toEqual({ known: true, enabled: true, chatOnly: false });
+  });
+
+  test("a fresh assistant does not report the lock as off, and a restarted one remembers", async () => {
+    const lockedApp = startFakeApp({ chatOnlyMode: true });
+    const store = new MemorySwitchStore();
+    const start = () =>
+      createAssistant({
+        config: { ...config, appApiUrl: `http://127.0.0.1:${lockedApp.port}` },
+        audit: new MemoryAuditLog(),
+        tickets: new TicketService(new MemoryTicketStore(), 60),
+        switches: store,
+      });
+    const ask = (assistant: ReturnType<typeof start>, path: string, cookie?: string) =>
+      assistant(new Request(`http://localhost/chat${path}`, { headers: cookie ? { cookie } : {} }));
+
+    const first = start();
+    const unknown = await ask(first, "/switches");
+    expect(unknown.status).toBe(503);
+    expect(await unknown.json()).toEqual({ known: false });
+
+    await ask(first, "/api/session", "crm_app.session_token=tok-agent");
+    expect(await (await ask(first, "/switches")).json()).toEqual({ known: true, enabled: true, chatOnly: true });
+
+    // A new process, nobody signed in yet: it still knows the lock is on.
+    const restarted = await ask(start(), "/switches");
+    expect(restarted.status).toBe(200);
+    expect(await restarted.json()).toEqual({ known: true, enabled: true, chatOnly: true });
+    lockedApp.stop(true);
   });
 
   test("the audit trail is the administrator's", async () => {

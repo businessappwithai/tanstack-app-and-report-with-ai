@@ -9,7 +9,7 @@ no cloud, no licence key, telemetry off.
 **Status.** The service runs, is tested, and is wired into the orchestrator behind
 `./start.sh --with-chat`. It has been run against a real generated application
 and the real reporting platform, outside Docker. A composed run has not been
-made, and no real language model has been used yet. `../openbotcompat.md` is the
+made, and no real language model has been used yet. `PLAN.md` is the
 plan and says what is done.
 
 ## What holds today
