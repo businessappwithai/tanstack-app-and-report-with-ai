@@ -231,13 +231,6 @@ jobs:
       - name: Smoke-test both applications, content types included
         run: ORIGIN=http://localhost bash common/build/smoke.sh
 
-      # The assistant's own surface, against the real application and platform:
-      # sign in with an application account, open a page in each product through
-      # a single-use ticket, and see the reporting platform accept the delegated
-      # sign-in. No language model is needed, so this runs on a runner with none.
-      - name: Smoke-test the chat assistant
-        run: ORIGIN=http://localhost bash common/build/chat-smoke.sh
-
       # The seeder is one shot: it registers the generated application's
       # database as a data source, caches its introspected schema, and writes
       # every saved query, report, chart and dashboard in the pack. Until it
@@ -258,6 +251,15 @@ jobs:
           done
           echo "::error::the seeder never finished"
           exit 1
+
+      # The assistant's own surface, against the real application and platform:
+      # sign in with an application account, open a page in each product through
+      # a single-use ticket, and see the reporting platform accept the delegated
+      # sign-in. No language model is needed, so this runs on a runner with none. It runs after
+      # the seeder because the application creates its accounts while it seeds; the script
+      # also retries the first sign-in for a few minutes.
+      - name: Smoke-test the chat assistant
+        run: ORIGIN=http://localhost bash common/build/chat-smoke.sh
 
       - name: What the platform was loaded with
         run: |

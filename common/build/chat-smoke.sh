@@ -35,9 +35,17 @@ check "/chat/open/<unknown ticket> is not available"  "$([[ $(status "$CHAT/open
 
 echo
 echo "Signing in with the application's own account ($EMAIL)"
-code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -c "$JAR" \
-  -H "origin: $ORIGIN" -H 'content-type: application/json' \
-  -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" "$CHAT/api/auth/sign-in/email")
+# The application seeds its accounts after it starts answering, so a first sign-in can be refused
+# for being early rather than for being wrong. Try for up to SIGNIN_WAIT seconds, and say what came back.
+deadline=$((SECONDS + ${SIGNIN_WAIT:-300}))
+while :; do
+  code=$(curl -s -o /tmp/chat-signin.body -w '%{http_code}' --max-time 30 -c "$JAR" \
+    -H "origin: $ORIGIN" -H 'content-type: application/json' \
+    -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" "$CHAT/api/auth/sign-in/email")
+  [[ $code == 200 || $SECONDS -ge $deadline ]] && break
+  sleep 5
+done
+[[ $code == 200 ]] || { echo "        last answer: $code $(head -c 300 /tmp/chat-signin.body 2>/dev/null)"; }
 check "the application accepted the sign-in through /chat ($code)" "$([[ $code == 200 ]]; echo $?)"
 
 session=$(curl -s --max-time 30 -b "$JAR" "$CHAT/api/session")
