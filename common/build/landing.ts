@@ -2,7 +2,7 @@
 /**
  * The front door: one page, two applications, both sign-ins.
  *
- *   bun build/landing.ts -i <pack.json> -o <dir> [--origin http://localhost]
+ *   bun build/landing.ts -i <pack.json> -o <dir> [--origin http://localhost] [--admin-password <pw>]
  *
  * `/` used to redirect to `/app`, under a comment in the nginx config saying
  * "Nothing is served at the root: this origin is two applications, and guessing
@@ -82,7 +82,15 @@ function accountRows(roles: AccessRoleSpec[], entityTotal: number): string {
     .join("\n");
 }
 
-export function renderLanding(pack: Pack, origin: string, chat = false): string {
+/** What docker-compose.yml seeds admin@admin.com with when ADMIN_PASSWORD is not set. */
+export const DEFAULT_ADMIN_PASSWORD = "administrator";
+
+export function renderLanding(
+  pack: Pack,
+  origin: string,
+  chat = false,
+  adminPassword = DEFAULT_ADMIN_PASSWORD
+): string {
   const roles = pack.access?.roles ?? [];
   // Stated by the pack. The fallback is for a pack built before it was, and
   // widens to the broadest role rather than claiming a total it cannot know.
@@ -212,12 +220,12 @@ ${
 ${accountRows(roles, entityTotal)}
     </tbody>
   </table>
-  <p class="pw">The two administrators share an address, <code>admin@admin.com</code>, and are
-  still two different accounts in two different databases &mdash; with two
-  different passwords, as above.</p>`
+  <p class="pw">The two administrators share an address and a password &mdash;
+  <code>admin@admin.com</code> / <code>${esc(adminPassword)}</code> &mdash; and are still two
+  different accounts in two different databases. The passwords above are for the role accounts.</p>`
     : `  <div class="note">This model declares no <code>%%rbac</code> roles, so each side has
-  only its administrator, <code>admin@admin.com</code> &mdash; <code>${esc(appPassword)}</code>
-  on the application, <code>${esc(reportPassword)}</code> on the reports.</div>`
+  only its administrator, <code>admin@admin.com</code> &mdash; <code>${esc(adminPassword)}</code>
+  on both the application and the reports (two separate accounts).</div>`
 }
 
   <footer>Generated from ${esc(app.model)}. Stop everything with <code>./stop.sh</code>.</footer>
@@ -237,9 +245,10 @@ function main(): number {
   const output = flag("-o") ?? flag("--output") ?? ".";
   const origin = flag("--origin") ?? "http://localhost";
   const chat = argv.includes("--chat");
+  const adminPassword = flag("--admin-password") || DEFAULT_ADMIN_PASSWORD;
 
   if (!input) {
-    console.error("usage: landing.ts -i <pack.json> [-o dir] [--origin http://localhost] [--chat]");
+    console.error("usage: landing.ts -i <pack.json> [-o dir] [--origin http://localhost] [--chat] [--admin-password <pw>]");
     return 2;
   }
   if (!existsSync(input)) {
@@ -250,7 +259,7 @@ function main(): number {
   const pack: Pack = JSON.parse(readFileSync(input, "utf8"));
   mkdirSync(path.resolve(output), { recursive: true });
   const target = path.join(path.resolve(output), "index.html");
-  writeFileSync(target, renderLanding(pack, origin, chat));
+  writeFileSync(target, renderLanding(pack, origin, chat, adminPassword));
 
   const roles = pack.access?.roles.length ?? 0;
   console.log(`  front door: ${roles} role(s), both sign-ins`);

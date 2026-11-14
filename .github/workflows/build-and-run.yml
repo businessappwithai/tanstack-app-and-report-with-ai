@@ -189,8 +189,6 @@ jobs:
             echo "JWT_SECRET=$(gen)"
             echo "SESSION_SECRET=$(gen)"
             echo "BETTER_AUTH_SECRET=$(gen)"
-            # The application's administrator, so the chat smoke can sign in as it.
-            echo "ADMIN_PASSWORD=$(gen)"
           } > "$RUNTIME/.env"
           chmod 600 "$RUNTIME/.env"
 
@@ -261,9 +259,7 @@ jobs:
       # the seeder because the application creates its accounts while it seeds; the script
       # also retries the first sign-in for a few minutes.
       - name: Smoke-test the chat assistant
-        run: |
-          CHAT_PASSWORD="$(sed -n 's/^ADMIN_PASSWORD=//p' "$RUNTIME/.env")" \
-            ORIGIN=http://localhost bash common/build/chat-smoke.sh
+        run: ORIGIN=http://localhost bash common/build/chat-smoke.sh
 
       - name: What the platform was loaded with
         run: |

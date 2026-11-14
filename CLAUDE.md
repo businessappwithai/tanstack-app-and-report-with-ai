@@ -547,7 +547,10 @@ Two details worth knowing:
   try a single password on both. The administrator is the exception and keeps
   `admin@admin.com` on each side — the same address, two different accounts, in
   two different databases — because that is what the platform bootstraps for
-  itself. Every seeded account uses the password `admin`.
+  itself. The administrator's password is **`administrator`** on both sides, seeded
+  automatically on first start (`ADMIN_PASSWORD` in `common/.runtime/.env` changes it
+  before first boot; under 8 characters is ignored). The role accounts' passwords are
+  the pack's (`appPassword`, `reportPassword`), shown on the front door.
 - **Only `read` rules narrow a reporting role.** `%%rbac` also restricts create,
   update and delete, and none of that means anything to somebody who cannot
   write through the reporting platform at all.

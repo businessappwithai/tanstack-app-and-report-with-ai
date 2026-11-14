@@ -28,6 +28,16 @@ readonly APP_DIR="${RUNTIME}/app"
 readonly PACK_DIR="${RUNTIME}/pack"
 readonly LANDING_DIR="${RUNTIME}/landing"
 readonly ENV_FILE="${RUNTIME}/.env"
+
+# admin@admin.com is seeded on first start, on both sides, with ADMIN_PASSWORD from
+# the environment file when it holds a usable one (8+ characters) and "administrator"
+# otherwise — the default docker-compose.yml applies. Read here so the front door and
+# the banner say what will actually be seeded.
+ADMIN_PASSWORD_SHOWN="administrator"
+if [[ -f "$ENV_FILE" ]]; then
+  _configured="$(sed -n 's/^ADMIN_PASSWORD=//p' "$ENV_FILE" | tail -1)"
+  [[ ${#_configured} -ge 8 ]] && ADMIN_PASSWORD_SHOWN="$_configured"
+fi
 readonly DEFAULT_MODEL="${COMMON}/language/examples/crm.eml.mmd"
 
 MODEL=""
@@ -128,7 +138,7 @@ say "5/7  Writing the front door"
 mkdir -p "$LANDING_DIR"
 (cd "$COMMON" && bun build/landing.ts \
     -i "../${PACK_DIR}/reporting-pack.json" -o "../${LANDING_DIR}" --origin "$ORIGIN" \
-    ${WITH_CHAT:+--chat})
+    --admin-password "$ADMIN_PASSWORD_SHOWN" ${WITH_CHAT:+--chat})
 
 say "6/7  Configuration"
 # Secrets are generated once and then left alone: regenerating ENCRYPTION_KEY
@@ -209,8 +219,8 @@ ${WITH_CHAT:+    ${ORIGIN}/chat     the assistant: both of the above, by asking 
   sign-ins. A role name means "what you may do to a record" in the application
   and "which tables your queries may read" in the reporting platform, so the
   accounts are listed side by side at ${ORIGIN}/ rather than here. Both
-  administrators are admin@admin.com / admin — the same address, two different
-  accounts, in two different databases.
+  administrators are admin@admin.com / ${ADMIN_PASSWORD_SHOWN} — the same address,
+  two different accounts, in two different databases.
 
   The first start migrates and seeds the application, then loads its schema and
   reporting pack into the platform. That takes a few minutes; until the seeder
