@@ -549,7 +549,7 @@ Two details worth knowing:
   two different databases — because that is what the platform bootstraps for
   itself. The administrator's password is **`administrator`** on both sides, seeded
   automatically on first start (`ADMIN_PASSWORD` in `common/.runtime/.env` changes it
-  before first boot; under 8 characters is ignored). The role accounts' passwords are
+  before first boot; `start.sh` refuses one under 8 characters, which the products would ignore). The role accounts' passwords are
   the pack's (`appPassword`, `reportPassword`), shown on the front door.
 - **Only `read` rules narrow a reporting role.** `%%rbac` also restricts create,
   update and delete, and none of that means anything to somebody who cannot

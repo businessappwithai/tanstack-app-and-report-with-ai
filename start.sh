@@ -30,13 +30,26 @@ readonly LANDING_DIR="${RUNTIME}/landing"
 readonly ENV_FILE="${RUNTIME}/.env"
 
 # admin@admin.com is seeded on first start, on both sides, with ADMIN_PASSWORD from
-# the environment file when it holds a usable one (8+ characters) and "administrator"
-# otherwise — the default docker-compose.yml applies. Read here so the front door and
-# the banner say what will actually be seeded.
+# the environment file, and with "administrator" when there is none — the default
+# docker-compose.yml applies. Read here so the front door and the banner say what
+# will actually be seeded. A configured value the products would ignore (under 8
+# characters) is refused rather than shown: they would generate a random password
+# instead, and the banner would be naming one nothing set.
 ADMIN_PASSWORD_SHOWN="administrator"
 if [[ -f "$ENV_FILE" ]]; then
   _configured="$(sed -n 's/^ADMIN_PASSWORD=//p' "$ENV_FILE" | tail -1)"
-  [[ ${#_configured} -ge 8 ]] && ADMIN_PASSWORD_SHOWN="$_configured"
+  # Compose strips one pair of surrounding quotes; so does this.
+  _configured="${_configured#\"}"; _configured="${_configured%\"}"
+  _configured="${_configured#\'}"; _configured="${_configured%\'}"
+  if [[ -n "$_configured" ]]; then
+    if [[ ${#_configured} -lt 8 ]]; then
+      echo "error: ADMIN_PASSWORD in ${ENV_FILE} is shorter than 8 characters; the application and the" >&2
+      echo "       reporting platform would ignore it and generate a random one. Use 8 or more," >&2
+      echo "       or delete the line to get the default." >&2
+      exit 1
+    fi
+    ADMIN_PASSWORD_SHOWN="$_configured"
+  fi
 fi
 readonly DEFAULT_MODEL="${COMMON}/language/examples/crm.eml.mmd"
 
