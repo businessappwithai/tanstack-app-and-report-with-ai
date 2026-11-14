@@ -8,14 +8,14 @@
 # surface, which is where identity, tickets and the reporting delegation live.
 #
 #   ORIGIN=http://localhost bash common/build/chat-smoke.sh
-#   CHAT_EMAIL=admin@admin.com CHAT_PASSWORD=admin  (the defaults)
+#   CHAT_EMAIL=admin@admin.com CHAT_PASSWORD=administrator  (the defaults)
 #   CHAT_ENTITY=bus_account                          (skip asking the application for one)
 set -uo pipefail
 
 ORIGIN="${ORIGIN:-http://localhost}"
 CHAT="$ORIGIN/chat"
 EMAIL="${CHAT_EMAIL:-admin@admin.com}"
-PASSWORD="${CHAT_PASSWORD:-admin}"
+PASSWORD="${CHAT_PASSWORD:-administrator}"
 JAR="$(mktemp)"
 trap 'rm -f "$JAR"' EXIT
 FAILED=0

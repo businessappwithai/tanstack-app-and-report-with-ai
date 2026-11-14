@@ -547,7 +547,14 @@ Two details worth knowing:
   try a single password on both. The administrator is the exception and keeps
   `admin@admin.com` on each side — the same address, two different accounts, in
   two different databases — because that is what the platform bootstraps for
-  itself. Every seeded account uses the password `admin`.
+  itself. The administrator's password is
+  `ADMIN_PASSWORD` in `common/.runtime/.env`, which `./start.sh` writes once: **`administrator`**
+  for the demo profile (a local try-out; the front door shows it) and a **random** one for
+  `--profile prod` (never shown on the front door, which is public; the banner prints it once).
+  An existing value wins; `start.sh` refuses one under 8 characters, which the products would
+  ignore. `docker-compose.yml` has no default of its own, so a stack started without `start.sh`
+  gets a random password too. It is applied when the databases are first created. The role
+  accounts' passwords are the pack's (`appPassword`, `reportPassword`), shown on the front door.
 - **Only `read` rules narrow a reporting role.** `%%rbac` also restricts create,
   update and delete, and none of that means anything to somebody who cannot
   write through the reporting platform at all.

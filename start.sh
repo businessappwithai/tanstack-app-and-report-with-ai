@@ -28,6 +28,7 @@ readonly APP_DIR="${RUNTIME}/app"
 readonly PACK_DIR="${RUNTIME}/pack"
 readonly LANDING_DIR="${RUNTIME}/landing"
 readonly ENV_FILE="${RUNTIME}/.env"
+
 readonly DEFAULT_MODEL="${COMMON}/language/examples/crm.eml.mmd"
 
 MODEL=""
@@ -58,6 +59,43 @@ case "$PROFILE" in
   demo|prod) ;;
   *) echo "Unknown profile \"$PROFILE\". Use demo or prod." >&2; exit 2 ;;
 esac
+
+# ── The administrator's password ────────────────────────────────────────────
+# admin@admin.com is seeded on first start, on both sides, from ADMIN_PASSWORD.
+#   · One already in common/.runtime/.env wins (8+ characters; a shorter one is
+#     refused, because the products would ignore it and generate a random one).
+#   · The demo profile is a local try-out: it gets the published default
+#     "administrator", written into .env so compose passes it on.
+#   · The prod profile gets a random one, written into .env once. It is never
+#     put on the front door, which is a public page.
+# docker-compose.yml itself defaults to nothing (random), so a stack started
+# without this script is never given a published password.
+ADMIN_PASSWORD_SHOWN=""
+ADMIN_PASSWORD_WRITE=""
+ADMIN_PASSWORD_GENERATED=""
+_configured=""
+if [[ -f "$ENV_FILE" ]]; then
+  _configured="$(sed -n 's/^ADMIN_PASSWORD=//p' "$ENV_FILE" | tail -1)"
+  # Compose strips one pair of surrounding quotes; so does this.
+  _configured="${_configured#\"}"; _configured="${_configured%\"}"
+  _configured="${_configured#\'}"; _configured="${_configured%\'}"
+fi
+if [[ -n "$_configured" ]]; then
+  if [[ ${#_configured} -lt 8 ]]; then
+    echo "error: ADMIN_PASSWORD in ${ENV_FILE} is shorter than 8 characters; the application and the" >&2
+    echo "       reporting platform would ignore it and generate a random one. Use 8 or more," >&2
+    echo "       or delete the line to get the default for this profile." >&2
+    exit 1
+  fi
+  ADMIN_PASSWORD_SHOWN="$_configured"
+elif [[ "$PROFILE" == "prod" ]]; then
+  ADMIN_PASSWORD_SHOWN="$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  ADMIN_PASSWORD_WRITE="1"
+  ADMIN_PASSWORD_GENERATED="1"
+else
+  ADMIN_PASSWORD_SHOWN="administrator"
+  ADMIN_PASSWORD_WRITE="1"
+fi
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -128,6 +166,7 @@ say "5/7  Writing the front door"
 mkdir -p "$LANDING_DIR"
 (cd "$COMMON" && bun build/landing.ts \
     -i "../${PACK_DIR}/reporting-pack.json" -o "../${LANDING_DIR}" --origin "$ORIGIN" \
+    --admin-password "$([[ "$PROFILE" == "prod" ]] && echo "" || echo "$ADMIN_PASSWORD_SHOWN")" \
     ${WITH_CHAT:+--chat})
 
 say "6/7  Configuration"
@@ -153,6 +192,13 @@ fi
 
 # Everything derived from this run is rewritten every time.
 sed -i.bak '/^# --- derived/,$d' "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
+
+# The administrator's password is a setting, not derived: written once, then left alone.
+if [[ -n "$ADMIN_PASSWORD_WRITE" ]]; then
+  sed -i.bak '/^ADMIN_PASSWORD=$/d' "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
+  echo "ADMIN_PASSWORD=${ADMIN_PASSWORD_SHOWN}" >> "$ENV_FILE"
+  echo "  wrote ADMIN_PASSWORD (${PROFILE} profile)"
+fi
 
 # The chat assistant's secret is one of the secrets: written once, the first
 # time --with-chat is used, and then left alone. It signs the assistant's
@@ -209,8 +255,11 @@ ${WITH_CHAT:+    ${ORIGIN}/chat     the assistant: both of the above, by asking 
   sign-ins. A role name means "what you may do to a record" in the application
   and "which tables your queries may read" in the reporting platform, so the
   accounts are listed side by side at ${ORIGIN}/ rather than here. Both
-  administrators are admin@admin.com / admin — the same address, two different
-  accounts, in two different databases.
+  administrators are admin@admin.com / ${ADMIN_PASSWORD_SHOWN} — the same address,
+  two different accounts, in two different databases.${ADMIN_PASSWORD_GENERATED:+
+  That password was generated for this prod stack and is in ${ENV_FILE}
+  (ADMIN_PASSWORD). It is applied when the databases are first created; to
+  reseed with it on an existing stack, ./stop.sh --volumes first.}
 
   The first start migrates and seeds the application, then loads its schema and
   reporting pack into the platform. That takes a few minutes; until the seeder

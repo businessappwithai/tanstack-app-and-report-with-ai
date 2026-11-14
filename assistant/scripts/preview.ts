@@ -16,11 +16,22 @@ import { SECRET, startFakeApp, startFakeModel, startFakeReport } from "../src/se
 const port = Number(process.env.PORT ?? 4300);
 const app = startFakeApp();
 const report = startFakeReport();
-const model = startFakeModel([
-  { tool: "search_records", args: { query: "acme" } },
-  { tool: "open_record", args: { object: "bus_account", id: "a1", title: "Acme Corporation" } },
-  { text: "I found Acme Corporation and opened it beside this conversation." },
-]);
+// PREVIEW_SCENARIO=propose shows the confirmation card instead of opening a record.
+const model = startFakeModel(
+  process.env.PREVIEW_SCENARIO === "propose"
+    ? [
+        {
+          tool: "propose_update",
+          args: { object: "bus_account", id: "a1", title: "Acme Corporation", changes: { industry: "Retail" } },
+        },
+        { text: "I have prepared that change. It will not happen until you confirm it on the card." },
+      ]
+    : [
+        { tool: "search_records", args: { query: "acme" } },
+        { tool: "open_record", args: { object: "bus_account", id: "a1", title: "Acme Corporation" } },
+        { text: "I found Acme Corporation and opened it beside this conversation." },
+      ]
+);
 
 const config = loadConfig({
   CHAT_BRIDGE_SECRET: SECRET,
