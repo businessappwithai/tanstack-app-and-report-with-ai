@@ -148,10 +148,11 @@ services:
       # application then never applies chat-only mode, whatever its switch says.
       CHAT_BRIDGE_SECRET: ${CHAT_BRIDGE_SECRET:-}
       # The bootstrap administrator, admin@admin.com, is seeded on first start with
-      # this password. Set ADMIN_PASSWORD in common/.runtime/.env to change it
-      # before first boot; it must be at least 8 characters, or the application
-      # ignores it and generates a random one.
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-administrator}
+      # this password. ./start.sh writes it into common/.runtime/.env: the published
+      # default for the demo profile, a random one for prod. Unset here means the
+      # application generates a random one and prints it once; under 8 characters
+      # is ignored the same way. No default is given on purpose.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       PORT: "4001"
       ELECTRIC_URL: http://electric:3000
       AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:8000/v1}
@@ -228,9 +229,9 @@ services:
       CHAT_EMBED: ${CHAT_EMBED:-}
       CHAT_SWITCHES_URL: ${CHAT_SWITCHES_URL:-}
       CHAT_URL: /chat/
-      # The platform's own admin@admin.com, seeded on first request. The same
-      # password as the application's administrator (they are still two accounts).
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-administrator}
+      # The platform's own admin@admin.com, seeded on first request, with the same
+      # password as the application's administrator (still two separate accounts).
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     expose:

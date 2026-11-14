@@ -82,14 +82,15 @@ function accountRows(roles: AccessRoleSpec[], entityTotal: number): string {
     .join("\n");
 }
 
-/** What docker-compose.yml seeds admin@admin.com with when ADMIN_PASSWORD is not set. */
+/** What ./start.sh writes as ADMIN_PASSWORD for the demo profile (prod gets a random one). */
 export const DEFAULT_ADMIN_PASSWORD = "administrator";
 
 export function renderLanding(
   pack: Pack,
   origin: string,
   chat = false,
-  adminPassword = DEFAULT_ADMIN_PASSWORD
+  /** null leaves the password off the page: the front door is public, and a generated one is not for it. */
+  adminPassword: string | null = DEFAULT_ADMIN_PASSWORD
 ): string {
   const roles = pack.access?.roles ?? [];
   // Stated by the pack. The fallback is for a pack built before it was, and
@@ -101,6 +102,10 @@ export function renderLanding(
   // pack built before that was carried.
   const appPassword = pack.access?.appPassword ?? "admin123";
   const reportPassword = pack.access?.reportPassword ?? "admin";
+  const adminShown =
+    adminPassword === null
+      ? "the <code>ADMIN_PASSWORD</code> in <code>common/.runtime/.env</code>"
+      : `<code>${esc(adminPassword)}</code>`;
   const counts = `${pack.reports.length} reports · ${pack.charts.length} charts · ${pack.dashboards.length} dashboards`;
 
   return `<!doctype html>
@@ -221,10 +226,10 @@ ${accountRows(roles, entityTotal)}
     </tbody>
   </table>
   <p class="pw">The two administrators share an address and a password &mdash;
-  <code>admin@admin.com</code> / <code>${esc(adminPassword)}</code> &mdash; and are still two
+  <code>admin@admin.com</code> / ${adminShown} &mdash; and are still two
   different accounts in two different databases. The passwords above are for the role accounts.</p>`
     : `  <div class="note">This model declares no <code>%%rbac</code> roles, so each side has
-  only its administrator, <code>admin@admin.com</code> &mdash; <code>${esc(adminPassword)}</code>
+  only its administrator, <code>admin@admin.com</code> &mdash; ${adminShown}
   on both the application and the reports (two separate accounts).</div>`
 }
 
@@ -245,7 +250,9 @@ function main(): number {
   const output = flag("-o") ?? flag("--output") ?? ".";
   const origin = flag("--origin") ?? "http://localhost";
   const chat = argv.includes("--chat");
-  const adminPassword = flag("--admin-password") || DEFAULT_ADMIN_PASSWORD;
+  // An empty value means "do not print it" (the prod profile); absent means the default.
+  const given = flag("--admin-password");
+  const adminPassword = given === undefined ? DEFAULT_ADMIN_PASSWORD : given === "" ? null : given;
 
   if (!input) {
     console.error("usage: landing.ts -i <pack.json> [-o dir] [--origin http://localhost] [--chat] [--admin-password <pw>]");
