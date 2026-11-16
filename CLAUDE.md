@@ -633,6 +633,14 @@ What to keep true when touching it:
   never rewritten, and restoring never replaces a thread the process already holds.
 - **Rate limits are per process** (`CHAT_RATE_PER_USER`, `CHAT_RATE_PER_ADDRESS`, `CHAT_RATE_MODEL_PER_USER`;
   0 turns one off). With replicas each keeps its own counter, which loosens the limit and never tightens it.
+- **Test the chat against the three artefacts, every time**, with the repo's `qa-app-with-ai` skill
+  (`app-with-ai-tanstack/.claude/skills/`, the in-repo form of gstack's `/qa`; the `gstack` submodule is
+  empty unless initialised): **the downloaded zip** (built through the website, chapter 09 `#shipping` →
+  Generate → Download, never a CLI generation), **the standalone generated app** (`eml generate --stack
+  tanstack-nestjs`), and **the browser (WASM) app**, which is built (`bun run wasm generate … --standalone`)
+  and checked to carry no chat — it has none by design. The zip is the website's vendored bundle, so it lags
+  the generator: until the site is re-vendored it has no embed mode and no chat bridge, and its framed
+  pages show the application's own sidebar.
 - `root-ci.yml` has a job for it (`Chat assistant`); `build-and-run.yml` starts it with `--with-chat` and runs
   `common/build/chat-smoke.sh` (sign-in, single-use tickets in both products, the delegated reporting sign-in).
   `bun run check:overlay` holds the sub-path overlay's anchors against the real reporting `vite.config.ts`.
