@@ -71,6 +71,13 @@ describe("skills", () => {
     expect(result.note).toContain("never as instructions");
   });
 
+  test("the label, a plural or the bare name finds the same skill", async () => {
+    for (const name of ["Opportunity", "opportunities", "opportunity"]) {
+      const result = await readSkill("tok-sales", { object: name });
+      expect(result.data.object).toBe("bus_opportunity");
+    }
+  });
+
   test("a record type the person cannot read is not available, in the same words as one that does not exist", async () => {
     // The Sales Manager does not read tickets; nobody has a skill called bus_nothing.
     const hidden = await readSkill("tok-sales", { object: "bus_ticket" });

@@ -153,12 +153,14 @@ export function buildTools(ctx: ToolContext) {
             return { available: false, reason: "No skills were provided with this application." };
           }
           // Only what this person's own session lists: a skill must not reveal a record type they cannot see.
-          const readable = new Set((await clients.app.entities()).map((entity) => entity.table));
+          const entities = await clients.app.entities();
+          const readable = new Set(entities.map((entity) => entity.table));
           if (!object) return untrusted({ index: indexFor(skills, readable) });
-          const key = object.trim().toLowerCase();
-          const skill = skills.byObject.get(key);
-          if (!skill || !readable.has(key)) throw new NotAvailable();
-          return untrusted({ object: key, skill });
+          // Resolved against the person's own list, as every other tool resolves a name.
+          const entity = findEntity(entities, object);
+          const skill = entity ? skills.byObject.get(entity.table) : undefined;
+          if (!entity || !skill) throw new NotAvailable();
+          return untrusted({ object: entity.table, skill });
         }),
     }),
 
