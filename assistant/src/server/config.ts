@@ -45,6 +45,8 @@ export interface AssistantConfig {
   embedTtlSeconds: number;
   /** Seconds a proposed change waits for the person to confirm it. */
   actionTtlSeconds: number;
+  /** The generated application's `assistant-skills/` folder, mounted read-only; null when there is none. */
+  skillsDir: string | null;
   /** Requests per minute: by signed-in person, and by address when there is no session. 0 = off. */
   rateLimits: { perUser: number; perAddress: number; modelPerUser: number };
 }
@@ -67,6 +69,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     },
     ticketTtlSeconds: Number(env.CHAT_TICKET_TTL_SECONDS ?? 60),
     embedTtlSeconds: Number(env.CHAT_EMBED_TTL_SECONDS ?? 900),
+    skillsDir: env.CHAT_SKILLS_DIR || null,
     actionTtlSeconds: Number(env.CHAT_ACTION_TTL_SECONDS ?? 300),
     rateLimits: {
       perUser: Number(env.CHAT_RATE_PER_USER ?? 240),

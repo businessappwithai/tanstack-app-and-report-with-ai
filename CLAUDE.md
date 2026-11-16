@@ -633,6 +633,11 @@ What to keep true when touching it:
   never rewritten, and restoring never replaces a thread the process already holds.
 - **Rate limits are per process** (`CHAT_RATE_PER_USER`, `CHAT_RATE_PER_ADDRESS`, `CHAT_RATE_MODEL_PER_USER`;
   0 turns one off). With replicas each keeps its own counter, which loosens the limit and never tightens it.
+- **It reads the generated application's skills** (`assistant-skills/`, written by the generator
+  beside `manual.html`): compose mounts `common/.runtime/app/assistant-skills` at `/skills`
+  (`CHAT_SKILLS_DIR`), and the `read_skill` tool hands one out — only for a record type the person's
+  own application session lists, and an index cut down to those. A skill is context, not access.
+  An application generated before the skills existed has none, and the tool says so.
 - **Test the chat against the three artefacts, every time**, with the repo's `qa-app-with-ai` skill
   (`app-with-ai-tanstack/.claude/skills/`, the in-repo form of gstack's `/qa`; the `gstack` submodule is
   empty unless initialised): **the downloaded zip** (built through the website, chapter 09 `#shipping` →

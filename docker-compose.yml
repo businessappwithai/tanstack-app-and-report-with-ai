@@ -295,6 +295,11 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:8000/v1}
       AI_API_KEY: ${AI_API_KEY:-local}
       AI_MODEL: ${AI_MODEL:-qwen3.6:27b-mlx}
+      # The generated application's skills (how each record type is named, its form,
+      # its buttons, its reports), written by the generator beside its manual.
+      CHAT_SKILLS_DIR: /skills
+    volumes:
+      - ./common/.runtime/app/assistant-skills:/skills:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     expose:

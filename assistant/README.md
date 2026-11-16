@@ -29,6 +29,13 @@ plan and says what is done.
 - **Every tool call is audited** (tool, target, outcome — never contents).
 - **Conversations belong to whoever started them** (CopilotKit's `identifyUser`).
 
+## Skills
+
+`CHAT_SKILLS_DIR` names the generated application's `assistant-skills/` folder (one Markdown file per
+record type, written by the generator). `read_skill` gives the model one of them, or the index, only
+for record types the person's own session lists. Without the folder the tool says no skills were
+provided.
+
 ## Still to do
 
 | Where | What |

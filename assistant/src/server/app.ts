@@ -39,6 +39,7 @@ import {
 } from "./products";
 import { type Clients, NotAvailable, resolveIntent } from "./registry";
 import { clientAddress, RateLimiter } from "./ratelimit";
+import { loadSkills, type Skills } from "./skills";
 import { signStatement } from "./signing";
 import { MemorySwitchStore, type Switches, type SwitchStore } from "./switches";
 import type { Intent, TicketService } from "./tickets";
@@ -48,6 +49,8 @@ export const EMBED_COOKIE = "chat_embed";
 
 export interface AssistantDeps {
   config: AssistantConfig;
+  /** The generated application's skills; loaded from config.skillsDir when absent. */
+  skills?: Skills;
   tickets: TicketService;
   audit: AuditLog;
   /** Where the last reading of the administrator's switches is kept; in memory when absent. */
@@ -82,6 +85,7 @@ const NOT_AVAILABLE_PAGE = `<!doctype html><meta charset="utf-8"><title>Not avai
 export function createAssistant(deps: AssistantDeps): (request: Request) => Promise<Response> {
   const { config, tickets, audit } = deps;
   const base = config.basePath;
+  const skills = deps.skills ?? loadSkills(config.skillsDir);
   const actions = deps.actions ?? new ActionStore(config.actionTtlSeconds);
   const limiter = new RateLimiter();
   const perMinute = (max: number) => ({ max, windowSeconds: 60 });
@@ -185,7 +189,7 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
           model: model as never,
           prompt: `${SYSTEM_PROMPT}\n\nYou are talking to ${caller.person.name}. The application is called ${caller.switches.appName}.`,
           maxSteps: 8,
-          tools: buildTools({ config, person: caller.person, clients: clientsFor(caller), audit, actions }),
+          tools: buildTools({ config, person: caller.person, clients: clientsFor(caller), audit, actions, skills }),
         }),
       };
     },
