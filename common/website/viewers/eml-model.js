@@ -10730,14 +10730,22 @@ function normalizeGraphActions(graph) {
       if (node.type !== "decisionTableNode" || !Array.isArray(table?.rules)) {
         return node;
       }
-      const inputIds = new Set((table.inputs ?? []).map((column) => column.id));
+      const inputs = (table.inputs ?? []).filter((col) => (col.field ?? "").trim() !== "");
+      const outputs = (table.outputs ?? []).map((col) => ({
+        ...col,
+        field: col.field || col.name || col.id
+      }));
+      const inputIds = new Set(inputs.map((column) => column.id));
+      const outputIds = new Set(outputs.map((column) => column.id));
       return {
         ...node,
         content: withTransformData({
           ...table,
+          inputs,
+          outputs,
           rules: table.rules.map((row) => Object.fromEntries(Object.entries(row).map(([key, cell]) => [
             key,
-            inputIds.has(key) ? emptyMeansBlank(rewrite(cell)) : rewrite(cell)
+            inputIds.has(key) ? emptyMeansBlank(rewrite(cell)) : outputIds.has(key) ? zenCell(rewrite(cell)) : rewrite(cell)
           ])))
         })
       };
