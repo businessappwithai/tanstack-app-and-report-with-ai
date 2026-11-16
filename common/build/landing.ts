@@ -69,14 +69,20 @@ const esc = (value: string): string =>
  * because that is the side where it means something: it is how many tables that
  * role's queries may read.
  */
-function accountRows(roles: AccessRoleSpec[], entityTotal: number): string {
+/**
+ * `adminPassword` is the administrator's own password, already escaped HTML. The table's column
+ * headings state the role accounts' passwords, which the administrator does not share, so its
+ * row says its own rather than leaving the reader to take the heading's.
+ */
+function accountRows(roles: AccessRoleSpec[], entityTotal: number, adminPassword: string): string {
   return roles
     .map((role) => {
       const scope = role.isAdmin ? "every table" : `${role.tables.length} of ${entityTotal} tables`;
+      const own = role.isAdmin ? `<span class="scope">password ${adminPassword}</span>` : "";
       return `        <tr${role.isAdmin ? ' class="is-admin"' : ""}>
           <th scope="row">${esc(role.name)}</th>
-          <td><code>${esc(role.appEmail)}</code></td>
-          <td><code>${esc(role.email)}</code><span class="scope">${esc(scope)}</span></td>
+          <td><code>${esc(role.appEmail)}</code>${own}</td>
+          <td><code>${esc(role.email)}</code><span class="scope">${esc(scope)}</span>${own}</td>
         </tr>`;
     })
     .join("\n");
@@ -105,6 +111,11 @@ export function renderLanding(
   const adminShown =
     adminPassword === null
       ? "the <code>ADMIN_PASSWORD</code> in <code>common/.runtime/.env</code>"
+      : `<code>${esc(adminPassword)}</code>`;
+  // For the administrator's row, where the whole sentence in `adminShown` would not fit.
+  const adminCell =
+    adminPassword === null
+      ? "<code>ADMIN_PASSWORD</code> in <code>.env</code>"
       : `<code>${esc(adminPassword)}</code>`;
   const counts = `${pack.reports.length} reports · ${pack.charts.length} charts · ${pack.dashboards.length} dashboards`;
 
@@ -222,7 +233,7 @@ ${
       </tr>
     </thead>
     <tbody>
-${accountRows(roles, entityTotal)}
+${accountRows(roles, entityTotal, adminCell)}
     </tbody>
   </table>
   <p class="pw">The two administrators share an address and a password &mdash;
