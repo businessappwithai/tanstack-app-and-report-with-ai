@@ -17,7 +17,7 @@
  */
 import type { Intelligence, LastMessage, MemorySummary, ThreadMessage, ThreadSummary } from "../interface/types";
 import { ThreadExistsError } from "../interface/types";
-import { OPENBOT_OPERATIONS, type OpenBotOperation } from "./operations.generated";
+import { OPENBOT_OPERATIONS, type OpenBotOperation } from "./operations";
 
 export interface OpenBotPerson {
   email: string;

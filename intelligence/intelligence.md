@@ -326,7 +326,7 @@ Everything else answers 501 `NOT_AVAILABLE_IN_THIS_DEPLOYMENT`, and capabilities
 response we send against the spec, and checks that every other route answers 501.
 
 **Done.** What was built:
-- `scripts/openbot-operations.ts` generates `src/openbot/operations.generated.ts` from the pinned `api/openapi.yaml`:
+- `scripts/openbot-operations.ts` generates `src/openbot/operations.generated.json` (data, read by `src/openbot/operations.ts`) from the pinned `api/openapi.yaml`:
   all 421 operations, each with its path pattern and the smallest body its schema accepts.
   `bun run check:openbot-operations` fails when the table is stale. CI fetches `api/` at the pin and runs it.
 - `src/openbot/api.ts` answers:

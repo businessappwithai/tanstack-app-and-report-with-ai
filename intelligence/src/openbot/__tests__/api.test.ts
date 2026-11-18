@@ -13,7 +13,7 @@ import { loadConfig } from "../../server/config";
 import { MemoryTicketStore, TicketService } from "../../server/tickets";
 import { SECRET, startFakeApp, startFakeModel, startFakeReport } from "../../server/__tests__/fakes";
 import { createMemoryIntelligence } from "../../providers/memory";
-import { OPENBOT_OPERATIONS } from "../operations.generated";
+import { OPENBOT_OPERATIONS } from "../operations";
 import { activityOf } from "../events";
 
 const app = startFakeApp();
