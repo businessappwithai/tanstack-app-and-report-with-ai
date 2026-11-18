@@ -268,7 +268,7 @@ services:
   #
   # It signs nobody in itself and holds no roles. It forwards the person's own
   # application session to the application, and asks the reporting platform for
-  # a session for the same person with CHAT_BRIDGE_SECRET. See assistant/README.md.
+  # a session for the same person with CHAT_BRIDGE_SECRET. See intelligence/README.md.
   #
   # No depends_on, for the reason nothing else here has one on a database: it
   # answers "could not check" while the application is still starting, and
@@ -276,7 +276,7 @@ services:
   assistant:
     profiles: ["chat"]
     build:
-      context: ./assistant
+      context: ./intelligence
       args:
         CHAT_BASE_PATH: /chat
     restart: unless-stopped

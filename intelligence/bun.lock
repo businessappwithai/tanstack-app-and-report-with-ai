@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "assistant",
+      "name": "intelligence",
       "dependencies": {
         "@ai-sdk/openai-compatible": "1.0.63",
         "@copilotkit/react-core": "1.87.0",

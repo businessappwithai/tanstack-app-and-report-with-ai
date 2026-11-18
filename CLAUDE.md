@@ -594,14 +594,16 @@ failure looks like a broken data source rather than a rotated key. Writing
 way to inject configuration — it keeps what it finds and rewrites only the block
 it derives from the run. `build-and-run.yml` uses exactly that.
 
-### The chat assistant — `assistant/`, optional, at `/chat`
+### The chat assistant — `intelligence/`, optional, at `/chat`
 
 `./start.sh --with-chat` adds a third service: a chat workspace through which a signed-in person
 reaches both applications by asking, and works on the real pages in a frame beside the conversation.
-It is **ours, and lives here** — `assistant/` is a package with its own lockfile, not a pinned
-checkout — and it is built on the open-source CopilotKit packages only (1.87.0; no Intelligence, no
-cloud, telemetry off). `assistant/PLAN.md` is the design and what is still to do; `assistant/README.md`
-is how to run it alone.
+It is **ours, and lives here** — `intelligence/` (formerly `assistant/`) is a package with its own
+lockfile, not a pinned checkout — and it is built on the open-source CopilotKit packages only (1.87.0; no Intelligence, no
+cloud, telemetry off). `intelligence/intelligence.md` is the design and what is still to do — including the next shape:
+OpenBot's MIT client over our own open Intelligence interface on Buzz, all of it under
+`intelligence/` — and `intelligence/README.md` is how to run it alone. The compose service and its
+hostname stay `assistant`, because the reporting platform reaches it at `http://assistant:4200`.
 
 What to keep true when touching it:
 
