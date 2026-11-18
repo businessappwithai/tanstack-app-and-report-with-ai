@@ -1,0 +1,121 @@
+#!/usr/bin/env bun
+/**
+ * Generate `src/openbot/operations.generated.json` from OpenBot's API contract at the pinned commit.
+ *
+ *   bun scripts/openbot-operations.ts           rewrite the table
+ *   bun scripts/openbot-operations.ts --check   fail when the committed table is not what the pin gives
+ *
+ * The table lists every operation in `api/openapi.yaml` (deps.json `openbot`, checked out under
+ * `.checkouts/openbot` by ./deps.sh): its method, its path as a pattern, the status it succeeds
+ * with, and the smallest body its success schema accepts. `src/openbot/` answers the operations it
+ * implements from the Intelligence interface, the ones that are merely about features this
+ * deployment does not have from the minimal body, and every other one with 501. The minimal body
+ * follows two rules learned against the real app: a nullable field is null (a non-null `nextCursor`
+ * makes the app page forever), and an array is empty.
+ */
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+
+const root = resolve(import.meta.dir, "..");
+const specPath = join(root, ".checkouts/openbot/api/openapi.yaml");
+const outPath = join(root, "src/openbot/operations.generated.json");
+const deps = JSON.parse(readFileSync(join(root, "../deps.json"), "utf8")) as { dependencies: Array<{ name: string; ref: string }> };
+const pin = deps.dependencies.find((d) => d.name === "openbot")?.ref;
+if (!pin) throw new Error("deps.json pins no `openbot`");
+if (!existsSync(specPath)) {
+  console.error(`No OpenBot checkout at ${specPath}. Run ./deps.sh first.`);
+  process.exit(2);
+}
+
+type Schema = Record<string, any>;
+const spec = Bun.YAML.parse(readFileSync(specPath, "utf8")) as Schema;
+
+function resolveRef(schema: Schema | undefined): Schema {
+  let current = schema ?? {};
+  for (let guard = 0; current.$ref && guard < 32; guard += 1) {
+    current = String(current.$ref)
+      .replace(/^#\//, "")
+      .split("/")
+      .reduce((node: Schema, key: string) => node?.[key], spec);
+  }
+  return current ?? {};
+}
+
+const NOW = "2026-01-01T00:00:00.000Z";
+function minimal(input: Schema | undefined, depth = 0): unknown {
+  const schema = resolveRef(input);
+  if (depth > 16) return null;
+  if (schema.const !== undefined) return schema.const;
+  if (Array.isArray(schema.type) && schema.type.includes("null")) return null;
+  if (schema.nullable === true) return null;
+  if (schema.enum) return schema.enum.find((value: unknown) => value !== null) ?? schema.enum[0];
+  if (schema.allOf) return Object.assign({}, ...schema.allOf.map((part: Schema) => (minimal(part, depth + 1) as object) ?? {}));
+  if (schema.oneOf || schema.anyOf) {
+    const options = (schema.oneOf ?? schema.anyOf).map(resolveRef);
+    if (options.some((option: Schema) => option.type === "null")) return null;
+    return minimal(options[0], depth + 1);
+  }
+  const type = Array.isArray(schema.type) ? schema.type.find((t: string) => t !== "null") : schema.type;
+  if (type === "object" || schema.properties) {
+    const out: Record<string, unknown> = {};
+    for (const key of schema.required ?? []) out[key] = minimal(schema.properties?.[key], depth + 1);
+    return out;
+  }
+  if (type === "array") return [];
+  if (type === "string") {
+    if (schema.format === "date-time") return NOW;
+    if (schema.format === "date") return NOW.slice(0, 10);
+    if (schema.format === "uuid") return "00000000-0000-4000-8000-000000000000";
+    if (schema.format === "uri" || schema.format === "url") return "https://example.org/";
+    if (schema.format === "email") return "person@example.org";
+    return schema.minLength ? "x".repeat(schema.minLength) : "";
+  }
+  if (type === "integer" || type === "number") return schema.minimum ?? 0;
+  if (type === "boolean") return false;
+  return null;
+}
+
+interface Operation {
+  operationId: string;
+  method: string;
+  path: string;
+  pattern: string;
+  status: number;
+  body: unknown;
+}
+
+const operations: Operation[] = [];
+for (const [path, item] of Object.entries<Schema>(spec.paths)) {
+  for (const method of ["get", "post", "put", "patch", "delete"]) {
+    const op = item[method];
+    if (!op) continue;
+    const responses = op.responses ?? {};
+    const code = ["200", "201", "202", "204"].find((c) => responses[c]) ?? "200";
+    const schema = resolveRef(responses[code])?.content?.["application/json"]?.schema;
+    operations.push({
+      operationId: op.operationId,
+      method: method.toUpperCase(),
+      path,
+      pattern: `^${path.replace(/\{[^}]+\}/g, "([^/]+)")}$`,
+      status: Number(code),
+      body: schema && code !== "204" ? minimal(schema) : null,
+    });
+  }
+}
+operations.sort((a, b) => a.operationId.localeCompare(b.operationId));
+
+// Data, not code: JSON, read by src/openbot/operations.ts. One operation per line keeps a pin move a
+// readable diff.
+const out = `{\n "generatedBy": "scripts/openbot-operations.ts",\n "specCommit": ${JSON.stringify(pin)},\n "operations": [\n${operations.map((o) => `  ${JSON.stringify(o)}`).join(",\n")}\n ]\n}\n`;
+
+if (process.argv.includes("--check")) {
+  const current = existsSync(outPath) ? readFileSync(outPath, "utf8") : "";
+  if (current !== out) {
+    console.error("src/openbot/operations.generated.json is not what the pinned api/openapi.yaml gives. Run: bun scripts/openbot-operations.ts");
+    process.exit(1);
+  }
+  console.log(`operations table matches OpenBot ${pin.slice(0, 8)} (${operations.length} operations)`);
+} else {
+  writeFileSync(outPath, out);
+  console.log(`wrote ${operations.length} operations from OpenBot ${pin.slice(0, 8)}`);
+}

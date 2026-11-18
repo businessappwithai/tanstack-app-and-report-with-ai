@@ -594,14 +594,16 @@ failure looks like a broken data source rather than a rotated key. Writing
 way to inject configuration — it keeps what it finds and rewrites only the block
 it derives from the run. `build-and-run.yml` uses exactly that.
 
-### The chat assistant — `assistant/`, optional, at `/chat`
+### The chat assistant — `intelligence/`, optional, at `/chat`
 
 `./start.sh --with-chat` adds a third service: a chat workspace through which a signed-in person
 reaches both applications by asking, and works on the real pages in a frame beside the conversation.
-It is **ours, and lives here** — `assistant/` is a package with its own lockfile, not a pinned
-checkout — and it is built on the open-source CopilotKit packages only (1.87.0; no Intelligence, no
-cloud, telemetry off). `assistant/PLAN.md` is the design and what is still to do; `assistant/README.md`
-is how to run it alone.
+It is **ours, and lives here** — `intelligence/` (formerly `assistant/`) is a package with its own
+lockfile, not a pinned checkout — and it is built on the open-source CopilotKit packages only (1.87.0; no Intelligence, no
+cloud, telemetry off). `intelligence/intelligence.md` is the design and what is still to do — including the next shape:
+OpenBot's MIT client over our own open Intelligence interface on Buzz, all of it under
+`intelligence/` — and `intelligence/README.md` is how to run it alone. The compose service and its
+hostname stay `assistant`, because the reporting platform reaches it at `http://assistant:4200`.
 
 What to keep true when touching it:
 
@@ -628,9 +630,15 @@ What to keep true when touching it:
   say nothing has happened; `POST /chat/api/actions/<id>/confirm` (same origin, JSON, the person's own
   session, one use, five minutes) runs the application's call with the version the record was read at.
   The model cannot confirm. Do not add a tool that writes directly.
-- **Conversations and tickets are in `chatdb`** (`chat_threads`, `chat_tickets`). The CopilotKit runner is
-  wrapped, not replaced (`durable.ts`): its thread endpoints are synchronous. A stored thread's owner is
-  never rewritten, and restoring never replaces a thread the process already holds.
+- **Conversations, finished runs and memory live behind the Intelligence interface** (`src/interface/`):
+  on the Buzz relay (`src/providers/buzz/`, the `buzz-relay` service) when `BUZZ_*` and
+  `KEY_ENCRYPTION_KEY` are set, in memory otherwise. `src/runtime/intelligence-runner.ts` is the
+  CopilotKit `AgentRunner` over it, with no CopilotKit internals; a run in progress stays in its process.
+  A thread belongs to whoever ran it first, and every relay read is made with the reader's own key, so the
+  relay's channel membership is what keeps one person out of another's threads. Each person's relay key
+  is sealed in `chatdb` (`ob_keys`) under `KEY_ENCRYPTION_KEY`; tickets stay in `chat_tickets`. Never
+  regenerate `KEY_ENCRYPTION_KEY`, `BUZZ_OPERATOR_SECRET` or `BUZZ_BOT_SECRET`: each strands what was
+  made under it. Any change to a provider must pass `src/interface/conformance.ts`.
 - **Rate limits are per process** (`CHAT_RATE_PER_USER`, `CHAT_RATE_PER_ADDRESS`, `CHAT_RATE_MODEL_PER_USER`;
   0 turns one off). With replicas each keeps its own counter, which loosens the limit and never tightens it.
 - **It reads the generated application's skills** (`assistant-skills/`, written by the generator

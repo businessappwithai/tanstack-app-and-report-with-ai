@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Place the two product repositories this one orchestrates, at the commits
- * `deps.json` pins.
+ * Place every repository `deps.json` pins, at its commit: the two products, and Buzz and OpenBot,
+ * which intelligence/ builds from.
  *
  * Neither is vendored here, and neither is a submodule. They are separate
  * repositories with their own CI, their own release cadence and their own
@@ -10,7 +10,7 @@
  * with. CI does the same thing with `actions/checkout` — same `deps.json`, same
  * refs — so a local tree and a runner check out identically.
  *
- *   ./deps.sh                 clone or update both to their pinned refs
+ *   ./deps.sh                 clone or update each to its pinned ref
  *   ./deps.sh --update        resolve each branch to its head and rewrite deps.json
  *   ./deps.sh --status        say what is checked out, and whether it matches
  *   ./deps.sh --install       also `bun install --frozen-lockfile` in each
@@ -235,7 +235,7 @@ if (args.has("-h") || args.has("--help")) {
     [
       "Place the product repositories this one orchestrates, at the commits deps.json pins.",
       "",
-      "  ./deps.sh              clone or update both to their pinned refs",
+      "  ./deps.sh              clone or update each to its pinned ref",
       "  ./deps.sh --install    also bun install --frozen-lockfile in each",
       "  ./deps.sh --status     say what is checked out, and whether it matches",
       "  ./deps.sh --update     resolve each branch to its head and rewrite deps.json",
@@ -275,4 +275,4 @@ if (failed > 0) {
   console.error(`\n${failed} dependency(ies) could not be placed.`);
   process.exit(1);
 }
-console.log("\nBoth checkouts are at their pinned commits.");
+console.log("\nEvery checkout is at its pinned commit.");

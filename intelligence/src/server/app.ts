@@ -26,7 +26,12 @@ import {
   createCopilotRuntimeHandler,
 } from "@copilotkit/runtime/v2";
 import { ActionStore, execute } from "./actions";
-import { DurableAgentRunner, MemoryThreadStore, type ThreadStore } from "./durable";
+import type { Intelligence } from "../interface/types";
+import type { Server } from "bun";
+import { createOpenBotApi } from "../openbot/api";
+import { CONVERSATION_EVENTS_PATH, createConversationEvents, type Connection } from "../openbot/events";
+import { createMemoryIntelligence } from "../providers/memory";
+import { IntelligenceRunner } from "../runtime/intelligence-runner";
 import type { AuditLog } from "./audit";
 import type { AssistantConfig } from "./config";
 import {
@@ -57,8 +62,10 @@ export interface AssistantDeps {
   switches?: SwitchStore;
   /** Serves the built client; absent in tests. */
   serveClient?: (request: Request, path: string) => Promise<Response> | Response;
-  /** Where conversations are saved so they survive a restart; in memory when absent. */
-  threads?: ThreadStore;
+  /** Where threads, finished runs and memory live (the Intelligence interface); in memory when absent. */
+  intelligence?: Intelligence;
+  /** The runner, when a test needs to wait for runs to be recorded; built from `intelligence` when absent. */
+  runner?: IntelligenceRunner;
   /** Proposed changes awaiting confirmation; the tests share one to propose from outside. */
   actions?: ActionStore;
   /** Replaces the language model; the tests pass a scripted one. */
@@ -82,7 +89,7 @@ const NOT_AVAILABLE_PAGE = `<!doctype html><meta charset="utf-8"><title>Not avai
 <p><strong>This page is not available.</strong></p>
 <p>The link has been used or has expired. Ask the assistant to open it again.</p>`;
 
-export function createAssistant(deps: AssistantDeps): (request: Request) => Promise<Response> {
+export function createAssistant(deps: AssistantDeps) {
   const { config, tickets, audit } = deps;
   const base = config.basePath;
   const skills = deps.skills ?? loadSkills(config.skillsDir);
@@ -178,7 +185,8 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
       apiKey: config.ai.apiKey,
     }).chatModel(config.ai.model);
 
-  const runner = new DurableAgentRunner(deps.threads ?? new MemoryThreadStore());
+  const intelligence = deps.intelligence ?? createMemoryIntelligence();
+  const runner = deps.runner ?? new IntelligenceRunner(intelligence);
   const runtime = new CopilotRuntime({
     // Built per request, so the tools close over this person's own session.
     agents: async ({ request }) => {
@@ -189,7 +197,7 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
           model: model as never,
           prompt: `${SYSTEM_PROMPT}\n\nYou are talking to ${caller.person.name}. The application is called ${caller.switches.appName}.`,
           maxSteps: 8,
-          tools: buildTools({ config, person: caller.person, clients: clientsFor(caller), audit, actions, skills }),
+          tools: buildTools({ config, person: caller.person, clients: clientsFor(caller), audit, actions, skills, memory: intelligence.memory }),
         }),
       };
     },
@@ -197,13 +205,17 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
     identifyUser: async (request) => {
       const caller = await identify(request);
       if (!caller) throw new Error("Not signed in");
-      // Saved conversations come back before the runtime asks whose they are.
-      await runner.restore(caller.person.email).catch(() => undefined);
-      return { id: caller.person.email, name: caller.person.name };
+      return { id: caller.person.email.toLowerCase(), name: caller.person.name };
     },
     runner,
   });
   const copilot = createCopilotRuntimeHandler({ runtime, basePath: `${base}/api/copilotkit` });
+  const openbot = createOpenBotApi({
+    intelligence,
+    bot: { id: "default", name: "Assistant", description: "Finds and opens records, pages and reports, and proposes changes for you to confirm." },
+    organizationName: "default",
+  });
+  const events = createConversationEvents(intelligence);
 
   /** The application's own Better Auth endpoints, so the assistant's sign-in form posts same-path. */
   async function passAuthThrough(request: Request, rest: string, search: string): Promise<Response> {
@@ -224,7 +236,22 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
     return new Response(upstream.body, { status: upstream.status, headers: out });
   }
 
-  return async function handle(request: Request): Promise<Response> {
+  /**
+   * Open the conversation-events socket for a signed-in person with the assistant switched on.
+   * True when the request was upgraded. Only from this origin: the browser sends the cookie on a
+   * cross-site WebSocket too, and the summaries it carries are the person's own.
+   */
+  async function upgrade(request: Request, server: Server<Connection>): Promise<boolean> {
+    const url = new URL(request.url);
+    if (url.pathname !== `${base}${CONVERSATION_EVENTS_PATH}`) return false;
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return false;
+    if (request.headers.get("origin") !== config.publicOrigin) return false;
+    const caller = await identify(request).catch(() => null);
+    if (!caller || !caller.switches.enabled) return false;
+    return events.upgrade(request, server, caller.person.email.toLowerCase());
+  }
+
+  async function handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname !== base && !url.pathname.startsWith(`${base}/`)) {
       return new Response("Not found", { status: 404 });
@@ -343,6 +370,20 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
         return json({ entries: await audit.recent(200) });
       }
 
+      // OpenBot's web app talks to this API. Only the signed-in person's own threads and memory answer.
+      // A write is from this site only, as JSON: a cross-site form POST carries the cookie but not
+      // this origin, and `text/plain` needs no preflight. Same rule as the confirm route below.
+      if (path.startsWith("/api/v2/")) {
+        if (request.method !== "GET" && request.method !== "HEAD") {
+          const origin = request.headers.get("origin");
+          const hasBody = request.method === "POST" || request.method === "PUT" || request.method === "PATCH";
+          if (origin !== config.publicOrigin || (hasBody && !request.headers.get("content-type")?.includes("application/json"))) {
+            return json({ error: "Refused" }, 403);
+          }
+        }
+        return openbot(request, path, caller.person);
+      }
+
       if (path.startsWith("/api/copilotkit")) {
         // A conversation turn runs the language model; that is the expensive call, so it has its own limit.
         if (request.method === "POST") {
@@ -357,5 +398,7 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
 
     if (deps.serveClient) return deps.serveClient(request, path);
     return new Response("Not found", { status: 404 });
-  };
+  }
+
+  return Object.assign(handle, { upgrade, websocket: events.websocket });
 }

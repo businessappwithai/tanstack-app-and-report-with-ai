@@ -1,0 +1,4 @@
+node_modules/
+dist/
+# Pinned third-party checkouts placed by ./deps.sh (block/buzz, CopilotKit/OpenBot): Docker build contexts, never code of ours.
+.checkouts/

@@ -21,6 +21,8 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'ers_knowledge')\gexec
   SELECT 'CREATE DATABASE chatdb OWNER $POSTGRES_USER'
     WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'chatdb')\gexec
+  SELECT 'CREATE DATABASE buzzdb OWNER $POSTGRES_USER'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'buzzdb')\gexec
 EOSQL
 
 # pgvector, in the application's database. Required: the generated
