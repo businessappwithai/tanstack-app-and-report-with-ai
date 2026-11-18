@@ -371,7 +371,18 @@ export function createAssistant(deps: AssistantDeps) {
       }
 
       // OpenBot's web app talks to this API. Only the signed-in person's own threads and memory answer.
-      if (path.startsWith("/api/v2/")) return openbot(request, path, caller.person);
+      // A write is from this site only, as JSON: a cross-site form POST carries the cookie but not
+      // this origin, and `text/plain` needs no preflight. Same rule as the confirm route below.
+      if (path.startsWith("/api/v2/")) {
+        if (request.method !== "GET" && request.method !== "HEAD") {
+          const origin = request.headers.get("origin");
+          const hasBody = request.method === "POST" || request.method === "PUT" || request.method === "PATCH";
+          if (origin !== config.publicOrigin || (hasBody && !request.headers.get("content-type")?.includes("application/json"))) {
+            return json({ error: "Refused" }, 403);
+          }
+        }
+        return openbot(request, path, caller.person);
+      }
 
       if (path.startsWith("/api/copilotkit")) {
         // A conversation turn runs the language model; that is the expensive call, so it has its own limit.

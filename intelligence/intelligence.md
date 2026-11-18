@@ -338,7 +338,7 @@ response we send against the spec, and checks that every other route answers 501
 - `src/openbot/events.ts` is the `conversation-events` socket, upgraded in `server.ts`. It is refused from any other
   origin and without a session.
 - Threads gained `pinned` and `lastMessage`. A conversation is named by the person's first line, as in OpenBot.
-- The agent has `recall_memory`, `remember` and `forget_memory`, on the person's own memory.
+- The agent has `recall_memory`, read only. It cannot write memory: text it reads can come from other people, so the person writes memory themselves on the Memory page. OpenBot writes are refused unless they come from this origin as JSON.
 
 `src/openbot/__tests__/api.test.ts` covers identity, owner isolation of conversations and memory, the quiet and 501
 answers, and the socket's origin check. It also checks the shapes of the core reads against the spec: required fields,
