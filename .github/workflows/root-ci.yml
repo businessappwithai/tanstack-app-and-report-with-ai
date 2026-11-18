@@ -431,6 +431,19 @@ jobs:
         # --ignore-scripts: no dependency here needs a lifecycle script, so none gets to run one.
         run: bun install --frozen-lockfile --ignore-scripts
 
+      # OpenBot's API contract at the pinned commit: the operations table is generated from it,
+      # and the contract test holds every implemented answer to its schemas. Only `api/` is needed.
+      - name: OpenBot's API contract at its pin
+        run: |
+          repo=$(jq -r '.dependencies[] | select(.name=="openbot") | .repository' ../deps.json)
+          ref=$(jq -r '.dependencies[] | select(.name=="openbot") | .ref' ../deps.json)
+          git init -q .checkouts/openbot
+          git -C .checkouts/openbot remote add origin "https://github.com/${repo}.git"
+          git -C .checkouts/openbot sparse-checkout set api
+          git -C .checkouts/openbot fetch -q --depth 1 origin "$ref"
+          git -C .checkouts/openbot checkout -q FETCH_HEAD
+          bun run check:openbot-operations
+
       - name: Type-check and tests
         run: bun run check:all
 

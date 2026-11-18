@@ -27,6 +27,9 @@ import {
 } from "@copilotkit/runtime/v2";
 import { ActionStore, execute } from "./actions";
 import type { Intelligence } from "../interface/types";
+import type { Server } from "bun";
+import { createOpenBotApi } from "../openbot/api";
+import { CONVERSATION_EVENTS_PATH, createConversationEvents, type Connection } from "../openbot/events";
 import { createMemoryIntelligence } from "../providers/memory";
 import { IntelligenceRunner } from "../runtime/intelligence-runner";
 import type { AuditLog } from "./audit";
@@ -86,7 +89,7 @@ const NOT_AVAILABLE_PAGE = `<!doctype html><meta charset="utf-8"><title>Not avai
 <p><strong>This page is not available.</strong></p>
 <p>The link has been used or has expired. Ask the assistant to open it again.</p>`;
 
-export function createAssistant(deps: AssistantDeps): (request: Request) => Promise<Response> {
+export function createAssistant(deps: AssistantDeps) {
   const { config, tickets, audit } = deps;
   const base = config.basePath;
   const skills = deps.skills ?? loadSkills(config.skillsDir);
@@ -194,7 +197,7 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
           model: model as never,
           prompt: `${SYSTEM_PROMPT}\n\nYou are talking to ${caller.person.name}. The application is called ${caller.switches.appName}.`,
           maxSteps: 8,
-          tools: buildTools({ config, person: caller.person, clients: clientsFor(caller), audit, actions, skills }),
+          tools: buildTools({ config, person: caller.person, clients: clientsFor(caller), audit, actions, skills, memory: intelligence.memory }),
         }),
       };
     },
@@ -207,6 +210,12 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
     runner,
   });
   const copilot = createCopilotRuntimeHandler({ runtime, basePath: `${base}/api/copilotkit` });
+  const openbot = createOpenBotApi({
+    intelligence,
+    bot: { id: "default", name: "Assistant", description: "Finds and opens records, pages and reports, and proposes changes for you to confirm." },
+    organizationName: "default",
+  });
+  const events = createConversationEvents(intelligence);
 
   /** The application's own Better Auth endpoints, so the assistant's sign-in form posts same-path. */
   async function passAuthThrough(request: Request, rest: string, search: string): Promise<Response> {
@@ -227,7 +236,22 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
     return new Response(upstream.body, { status: upstream.status, headers: out });
   }
 
-  return async function handle(request: Request): Promise<Response> {
+  /**
+   * Open the conversation-events socket for a signed-in person with the assistant switched on.
+   * True when the request was upgraded. Only from this origin: the browser sends the cookie on a
+   * cross-site WebSocket too, and the summaries it carries are the person's own.
+   */
+  async function upgrade(request: Request, server: Server<Connection>): Promise<boolean> {
+    const url = new URL(request.url);
+    if (url.pathname !== `${base}${CONVERSATION_EVENTS_PATH}`) return false;
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return false;
+    if (request.headers.get("origin") !== config.publicOrigin) return false;
+    const caller = await identify(request).catch(() => null);
+    if (!caller || !caller.switches.enabled) return false;
+    return events.upgrade(request, server, caller.person.email.toLowerCase());
+  }
+
+  async function handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname !== base && !url.pathname.startsWith(`${base}/`)) {
       return new Response("Not found", { status: 404 });
@@ -346,6 +370,9 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
         return json({ entries: await audit.recent(200) });
       }
 
+      // OpenBot's web app talks to this API. Only the signed-in person's own threads and memory answer.
+      if (path.startsWith("/api/v2/")) return openbot(request, path, caller.person);
+
       if (path.startsWith("/api/copilotkit")) {
         // A conversation turn runs the language model; that is the expensive call, so it has its own limit.
         if (request.method === "POST") {
@@ -360,5 +387,7 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
 
     if (deps.serveClient) return deps.serveClient(request, path);
     return new Response("Not found", { status: 404 });
-  };
+  }
+
+  return Object.assign(handle, { upgrade, websocket: events.websocket });
 }

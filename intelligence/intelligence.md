@@ -325,6 +325,27 @@ client.
 Everything else answers 501 `NOT_AVAILABLE_IN_THIS_DEPLOYMENT`, and capabilities say so. A contract test validates every
 response we send against the spec, and checks that every other route answers 501.
 
+**Done.** What was built:
+- `scripts/openbot-operations.ts` generates `src/openbot/operations.generated.ts` from the pinned `api/openapi.yaml`:
+  all 421 operations, each with its path pattern and the smallest body its schema accepts.
+  `bun run check:openbot-operations` fails when the table is stale. CI fetches `api/` at the pin and runs it.
+- `src/openbot/api.ts` answers:
+  - **Implemented (19):** deployment, organizations, the person, the one Bot, conversations, messages, activity,
+    threads, and memory.
+  - **Quiet:** feature reads that get the contract's empty shape.
+  - **Everything else:** 501 problem+json.
+- `app.ts` routes `/chat/api/v2/*` there once the application session identifies the caller and the assistant is on.
+- `src/openbot/events.ts` is the `conversation-events` socket, upgraded in `server.ts`. It is refused from any other
+  origin and without a session.
+- Threads gained `pinned` and `lastMessage`. A conversation is named by the person's first line, as in OpenBot.
+- The agent has `recall_memory`, `remember` and `forget_memory`, on the person's own memory.
+
+`src/openbot/__tests__/api.test.ts` covers identity, owner isolation of conversations and memory, the quiet and 501
+answers, and the socket's origin check. It also checks the shapes of the core reads against the spec: required fields,
+types and nullability.
+
+Not done: writes do not honour `Idempotency-Key` yet.
+
 ### 12. Dropped: the Intelligence wire protocol
 
 Phase 7 showed that OpenBot's client chats over CopilotKit's local mode, so no Intelligence gateway is built. See

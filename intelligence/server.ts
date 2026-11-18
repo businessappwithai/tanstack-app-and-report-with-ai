@@ -77,7 +77,12 @@ const server = Bun.serve({
   hostname: "0.0.0.0",
   // A model thinking between tool calls is quiet for a long time.
   idleTimeout: 255,
-  fetch: (request) => handle(request),
+  fetch: async (request, server) => {
+    // OpenBot's conversation-events socket; every other request is ordinary HTTP.
+    if (await handle.upgrade(request, server)) return undefined;
+    return handle(request);
+  },
+  websocket: handle.websocket,
 });
 
 console.log(`assistant listening on :${server.port}${config.basePath}`);
