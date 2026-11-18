@@ -212,7 +212,7 @@ fi
 # replaced — a new one strands everything made under the old.
 if [[ -n "$WITH_CHAT" ]]; then
   (cd intelligence && bun install --frozen-lockfile --ignore-scripts >/dev/null)
-  bun intelligence/scripts/chat-keys.ts "$ENV_FILE"
+  bun intelligence/scripts/chat-keys.ts   # writes $ENV_FILE
 fi
 {
   echo "# --- derived from this run; rewritten on every ./start.sh"

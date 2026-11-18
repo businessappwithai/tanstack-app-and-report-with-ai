@@ -2,7 +2,11 @@
 /**
  * Write the chat profile's keys into an env file, once, and leave existing ones alone.
  *
- *   bun intelligence/scripts/chat-keys.ts common/.runtime/.env
+ *   bun intelligence/scripts/chat-keys.ts
+ *
+ * The file is always `common/.runtime/.env`, found from this script's own location. It takes no
+ * path argument on purpose: a script that appends secrets to whatever file it is named would write
+ * them anywhere a caller (or an agent filling in the command) points it.
  *
  * | Variable                 | What it is                                                              |
  * |--------------------------|-------------------------------------------------------------------------|
@@ -18,15 +22,18 @@
  * secrets; RELAY_OWNER_PUBKEY is re-derived only from a present operator secret.
  */
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { bytesToHex, hexToBytes } from "nostr-tools/utils";
 
-const file = process.argv[2];
-if (!file) {
-  console.error("usage: bun intelligence/scripts/chat-keys.ts <env-file>");
+if (process.argv.length > 2) {
+  console.error("usage: bun intelligence/scripts/chat-keys.ts  (it writes common/.runtime/.env and takes no arguments)");
   process.exit(1);
 }
+const runtime = resolve(import.meta.dir, "../../common/.runtime");
+mkdirSync(runtime, { recursive: true });
+const file = join(runtime, ".env");
 
 const present = new Map<string, string>();
 if (existsSync(file)) {
@@ -40,7 +47,7 @@ const written: string[] = [];
 function ensure(name: string, make: () => string) {
   if (present.has(name)) return present.get(name)!;
   const value = make();
-  appendFileSync(file!, `${name}=${value}\n`);
+  appendFileSync(file, `${name}=${value}\n`);
   present.set(name, value);
   written.push(name);
   return value;

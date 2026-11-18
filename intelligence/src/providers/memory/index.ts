@@ -24,6 +24,8 @@ interface HeldThread {
 }
 
 const now = () => new Date().toISOString();
+const newestFirst = (a: ThreadSummary, b: ThreadSummary) =>
+  (b.lastMessage?.at ?? b.lastRunAt ?? b.updatedAt).localeCompare(a.lastMessage?.at ?? a.lastRunAt ?? a.updatedAt);
 const key = (owner: string) => owner.toLowerCase();
 
 export function createMemoryIntelligence(): Intelligence {
@@ -43,7 +45,7 @@ export function createMemoryIntelligence(): Intelligence {
         .filter((t) => options.includeArchived || !t.summary.archived)
         .filter((t) => !options.agentId || t.summary.agentId === options.agentId)
         .map((t) => ({ ...t.summary }))
-        .sort((a, b) => (b.lastRunAt ?? b.updatedAt).localeCompare(a.lastRunAt ?? a.updatedAt))
+        .sort(newestFirst)
         .slice(0, options.limit && options.limit > 0 ? options.limit : undefined);
     },
     async create(owner, input) {
@@ -54,9 +56,11 @@ export function createMemoryIntelligence(): Intelligence {
         name: input.name ?? null,
         agentId: input.agentId,
         archived: false,
+        pinned: false,
         createdAt: at,
         updatedAt: at,
         lastRunAt: null,
+        lastMessage: null,
       };
       threads.set(input.threadId, { owner: key(owner), summary, runs: [] });
       changes.publish(owner, { operation: "created", thread: { ...summary } });
@@ -71,6 +75,8 @@ export function createMemoryIntelligence(): Intelligence {
       if (!thread) return null;
       if (update.name !== undefined) thread.summary.name = update.name;
       if (update.archived !== undefined) thread.summary.archived = update.archived;
+      if (update.pinned !== undefined) thread.summary.pinned = update.pinned;
+      if (update.lastMessage !== undefined) thread.summary.lastMessage = { ...update.lastMessage };
       thread.summary.updatedAt = now();
       const summary = { ...thread.summary };
       changes.publish(owner, { operation: update.archived ? "archived" : "updated", thread: summary });

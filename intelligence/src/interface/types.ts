@@ -35,9 +35,27 @@ export interface ThreadSummary {
   name: string | null;
   agentId: string;
   archived: boolean;
+  /** Pinned to the top of its owner's list. */
+  pinned: boolean;
   createdAt: string;
   updatedAt: string;
   lastRunAt: string | null;
+  /** The newest message, on one line, for the owner's list; null until there is one. */
+  lastMessage: LastMessage | null;
+}
+
+export interface LastMessage {
+  text: string;
+  at: string;
+  /** Who wrote it: the person, or the agent named. */
+  by: "person" | { agentId: string };
+}
+
+export interface ThreadUpdate {
+  name?: string | null;
+  archived?: boolean;
+  pinned?: boolean;
+  lastMessage?: LastMessage;
 }
 
 /** A finished run, as the runner records it: its compacted events and the thread's messages after it. */
@@ -81,7 +99,7 @@ export interface ThreadStore {
   /** Fails with `ThreadExistsError` when the id is taken, whoever holds it. */
   create(owner: string, input: { threadId: string; agentId: string; name?: string | null }): Promise<ThreadSummary>;
   get(owner: string, threadId: string): Promise<ThreadSummary | null>;
-  update(owner: string, threadId: string, changes: { name?: string | null; archived?: boolean }): Promise<ThreadSummary | null>;
+  update(owner: string, threadId: string, changes: ThreadUpdate): Promise<ThreadSummary | null>;
   /** True when it was there to delete. */
   delete(owner: string, threadId: string): Promise<boolean>;
   /** The message snapshot after the latest run; empty for a thread with none, or not theirs. */

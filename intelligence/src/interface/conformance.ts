@@ -42,7 +42,7 @@ export function describeIntelligence(name: string, options: ConformanceOptions):
       const intelligence = await options.make();
       const threadId = id();
       const created = await intelligence.threads.create(alice, { threadId, agentId: "default", name: "Acme" });
-      expect(created).toMatchObject({ id: threadId, name: "Acme", agentId: "default", archived: false, lastRunAt: null });
+      expect(created).toMatchObject({ id: threadId, name: "Acme", agentId: "default", archived: false, pinned: false, lastRunAt: null, lastMessage: null });
       expect((await intelligence.threads.get(alice, threadId))?.id).toBe(threadId);
       expect(await intelligence.threads.get(bob, threadId)).toBeNull();
       expect((await intelligence.threads.list(alice)).map((t) => t.id)).toContain(threadId);
@@ -75,6 +75,24 @@ export function describeIntelligence(name: string, options: ConformanceOptions):
       expect((await intelligence.threads.list(alice)).map((t) => t.id)).not.toContain(threadId);
       const archived = await intelligence.threads.list(alice, { includeArchived: true });
       expect(archived.find((t) => t.id === threadId)).toMatchObject({ name: "Renamed", archived: true });
+    });
+
+    test("pin and the newest message are kept, and order the owner's list", async () => {
+      const intelligence = await options.make();
+      const older = id();
+      const newer = id();
+      await intelligence.threads.create(alice, { threadId: older, agentId: "default" });
+      await intelligence.threads.create(alice, { threadId: newer, agentId: "default" });
+      const pinned = await intelligence.threads.update(alice, older, { pinned: true });
+      expect(pinned?.pinned).toBe(true);
+      await intelligence.threads.update(alice, older, { lastMessage: { text: "first", at: "2026-11-18T10:00:00.000Z", by: "person" } });
+      const latest = await intelligence.threads.update(alice, newer, {
+        lastMessage: { text: "Here is Acme.", at: "2026-11-18T11:00:00.000Z", by: { agentId: "default" } },
+      });
+      expect(latest?.lastMessage).toEqual({ text: "Here is Acme.", at: "2026-11-18T11:00:00.000Z", by: { agentId: "default" } });
+      const listed = await intelligence.threads.list(alice);
+      expect(listed.map((t) => t.id).filter((t) => t === older || t === newer)).toEqual([newer, older]);
+      expect(listed.find((t) => t.id === older)).toMatchObject({ pinned: true, lastMessage: { text: "first", by: "person" } });
     });
 
     test("delete removes the thread for its owner, and is refused for anyone else", async () => {

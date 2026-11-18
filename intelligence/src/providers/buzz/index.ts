@@ -93,7 +93,8 @@ export function createBuzzIntelligence(options: BuzzIntelligenceOptions): Intell
   const summaryOf = (event: Event): ThreadSummary | null => {
     try {
       const summary = JSON.parse(event.content) as ThreadSummary;
-      return typeof summary.id === "string" ? summary : null;
+      if (typeof summary.id !== "string") return null;
+      return { ...summary, pinned: summary.pinned === true, lastMessage: summary.lastMessage ?? null };
     } catch {
       return null;
     }
@@ -271,7 +272,7 @@ export function createBuzzIntelligence(options: BuzzIntelligenceOptions): Intell
           .filter((s): s is ThreadSummary => s !== null)
           .filter((s) => listOptions.includeArchived || !s.archived)
           .filter((s) => !listOptions.agentId || s.agentId === listOptions.agentId)
-          .sort((a, b) => (b.lastRunAt ?? b.updatedAt).localeCompare(a.lastRunAt ?? a.updatedAt))
+          .sort((a, b) => (b.lastMessage?.at ?? b.lastRunAt ?? b.updatedAt).localeCompare(a.lastMessage?.at ?? a.lastRunAt ?? a.updatedAt))
           .slice(0, listOptions.limit && listOptions.limit > 0 ? listOptions.limit : undefined);
       },
 
@@ -294,28 +295,37 @@ export function createBuzzIntelligence(options: BuzzIntelligenceOptions): Intell
           throw error;
         }
         if (created.duplicate) throw new ThreadExistsError(input.threadId);
-        await relay.publish(operator, KIND_ADD_MEMBER, [["h", channel], ["p", me.pubkey]]);
-        await relay.publish(operator, KIND_ADD_MEMBER, [["h", channel], ["p", botPubkey]]);
         const at = nowIso();
         const summary: ThreadSummary = {
           id: input.threadId,
           name: input.name ?? null,
           agentId: input.agentId,
           archived: false,
+          pinned: false,
           createdAt: at,
           updatedAt: at,
           lastRunAt: null,
+          lastMessage: null,
         };
-        await relay.publish(
-          me.secret,
-          KIND_ARTIFACT,
-          artifactTags(threadRecordFor(input.threadId), channel, TYPE_THREAD, summary.name ?? "Conversation", "create", undefined, [
-            ["owner", me.pubkey],
-            ["agent", summary.agentId],
-            ["archived", "false"],
-          ]),
-          JSON.stringify(summary)
-        );
+        // If anything after the claim fails, give the claim back: a channel with no members and no
+        // summary is reachable by nobody, and would refuse a retry of the same id for ever.
+        try {
+          await relay.publish(operator, KIND_ADD_MEMBER, [["h", channel], ["p", me.pubkey]]);
+          await relay.publish(operator, KIND_ADD_MEMBER, [["h", channel], ["p", botPubkey]]);
+          await relay.publish(
+            me.secret,
+            KIND_ARTIFACT,
+            artifactTags(threadRecordFor(input.threadId), channel, TYPE_THREAD, summary.name ?? "Conversation", "create", undefined, [
+              ["owner", me.pubkey],
+              ["agent", summary.agentId],
+              ["archived", "false"],
+            ]),
+            JSON.stringify(summary)
+          );
+        } catch (error) {
+          await relay.publish(operator, KIND_DELETE_CHANNEL, [["h", channel]]).catch(() => undefined);
+          throw error;
+        }
         changes.publish(owner, { operation: "created", thread: summary });
         return { ...summary };
       },
@@ -331,6 +341,8 @@ export function createBuzzIntelligence(options: BuzzIntelligenceOptions): Intell
           ...summary,
           ...(update.name !== undefined ? { name: update.name } : {}),
           ...(update.archived !== undefined ? { archived: update.archived } : {}),
+          ...(update.pinned !== undefined ? { pinned: update.pinned } : {}),
+          ...(update.lastMessage !== undefined ? { lastMessage: { ...update.lastMessage } } : {}),
           updatedAt: nowIso(),
         }));
         if (next) changes.publish(owner, { operation: update.archived ? "archived" : "updated", thread: next });
@@ -372,15 +384,8 @@ export function createBuzzIntelligence(options: BuzzIntelligenceOptions): Intell
         if (!summary) return;
         if (await current(me.secret, runPartFor(threadId, run.runId, 0))) return;
 
-        // The conversation, as people read it in any Buzz client: the new lines of this run.
+        // Lines already in the channel: those of the runs recorded before this one.
         const earlier = new Set((await listRuns(owner, threadId)).flatMap((r) => r.messages.map((m) => m.id)));
-        for (const message of run.messages) {
-          if (earlier.has(message.id)) continue;
-          const line = text(message);
-          if (!line) continue;
-          if (message.role === "user") await relay.publish(me.secret, KIND_MESSAGE, [["h", channel]], line);
-          else if (message.role === "assistant") await relay.publish(bot, KIND_MESSAGE, [["h", channel]], line);
-        }
 
         // The exact record: event parts first, the snapshot (part 0) last, so a run is listed only
         // once all of it is there.
@@ -406,6 +411,18 @@ export function createBuzzIntelligence(options: BuzzIntelligenceOptions): Intell
           await relay.publish(bot, KIND_ARTIFACT, artifactTags(runPartFor(threadId, run.runId, 0), channel, TYPE_RUN, `${title} snapshot`, "create", undefined, partTags(0)), JSON.stringify(meta));
         } catch (error) {
           if (!isTaken(error)) throw error;
+        }
+
+        // The conversation, as people read it in any Buzz client: the new lines of this run. Posted
+        // only once the snapshot is stored, so a retry of a run that failed part-way (which returns
+        // above once part 0 exists) never posts them twice. The record is the exact copy; these
+        // lines are a readable mirror of it, and a line lost to a failure here is not re-sent.
+        for (const message of run.messages) {
+          if (earlier.has(message.id)) continue;
+          const line = text(message);
+          if (!line) continue;
+          if (message.role === "user") await relay.publish(me.secret, KIND_MESSAGE, [["h", channel]], line);
+          else if (message.role === "assistant") await relay.publish(bot, KIND_MESSAGE, [["h", channel]], line);
         }
 
         const next = await revise(owner, threadId, (s) => ({ ...s, lastRunAt: new Date(run.createdAt).toISOString(), updatedAt: nowIso() }));

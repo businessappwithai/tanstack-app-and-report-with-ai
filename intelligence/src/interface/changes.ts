@@ -16,9 +16,14 @@ export class ChangeHub implements ThreadChanges {
     const set = this.listeners.get(key) ?? new Set();
     set.add(listener);
     this.listeners.set(key, set);
+    let stopped = false;
     return () => {
+      // Idempotent, and never removes a set a later subscription made: a socket's close and error
+      // handlers can both call this.
+      if (stopped) return;
+      stopped = true;
       set.delete(listener);
-      if (set.size === 0) this.listeners.delete(key);
+      if (set.size === 0 && this.listeners.get(key) === set) this.listeners.delete(key);
     };
   }
 
