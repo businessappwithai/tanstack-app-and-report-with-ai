@@ -200,37 +200,16 @@ wire unchanged.
 
 ```ts
 interface Intelligence {
-  threads: {
-    list(owner, { agentId, includeArchived, limit, cursor }): Promise<{ threads: ThreadSummary[]; nextCursor: string | null }>;
-    create(owner, { threadId, agentId, name? }): Promise<ThreadSummary>;     // conflict if it exists
-    get(owner, threadId): Promise<ThreadSummary | null>;                     // null: missing or not theirs
-    update(owner, threadId, { name?, archived? }): Promise<ThreadSummary>;
-    delete(owner, threadId): Promise<void>;
-    messages(owner, threadId): Promise<ThreadMessage[]>;
-  };
-  runs: {
-    acquire(owner, threadId, runId, ttlSeconds): Promise<RunLock>;           // conflict while another run holds it
-    renew(lock): Promise<"renewed" | "completed" | "lost">;
-    release(lock): Promise<void>;
-    append(lock, events: AgUiEvent[]): Promise<void>;                        // durable before it resolves; deduped by id
-    events(owner, threadId, { after?: eventId }): AsyncIterable<AgUiEvent>;   // replay, in order
-    active(threadId): Promise<string | null>;
-    requestStop(owner, threadId, runId): Promise<void>;
-  };
-  realtime: {
-    follow(owner, threadId, after?: eventId): AsyncIterable<AgUiEvent>;      // replay, then live
-    threadChanges(owner): AsyncIterable<ThreadChange>;                        // created / updated / archived / deleted
-  };
-  memory: {
-    list(owner, { includeInvalidated }): Promise<MemorySummary[]>;
-    create(owner, { content, kind, scope, sourceThreadIds }): Promise<MemorySummary>;
-    supersede(owner, id, { content, kind, scope, sourceThreadIds }): Promise<MemorySummary>;
-    forget(owner, id): Promise<void>;
-    recall(owner, { query, limit, scope }): Promise<Array<MemorySummary & { score: number }>>;
-  };
-  entitlements(): Promise<Entitlement>;   // honest: open source, self-hosted, features as built — never a forged licence
+  threads: ThreadStore;   // list · create (conflict if the id exists) · get · update (name, archived) · delete · messages
+  runs: RunStore;         // record a finished run (compacted AG-UI events + message snapshot) · list a thread's runs
+  memory: MemoryStore;    // list · create · supersede · forget · recall (keyword ranking in src/interface/recall.ts)
+  changes: ThreadChanges; // subscribe to an owner's thread changes (created / updated / archived / deleted)
 }
 ```
+
+The full contract is `src/interface/types.ts`. Live run state (the lock, the stream in progress, stop) is not part of
+it: it stays in the runner's process, as CopilotKit's own in-memory runner keeps it, and only a finished run is
+recorded. Entitlements are not part of it either: the runtime reports its own (no licence), and nothing here forges one.
 
 `owner` is the person's lower-cased email, as `identifyUser` returns it today. Every method refuses another owner's
 thread or memory.
@@ -286,7 +265,7 @@ The output is `docs/phase-7-findings.md`, plus updates to this file.
 mapping was proven against it. OpenBot's app built on Bun 1.4.4 and chatted against a CopilotKit 1.88.0 runtime with
 no Intelligence. The roughly 35 operations its core paths call are listed in the findings.
 
-### 8. The interface and the in-memory provider
+### 8. The interface and the in-memory provider — done
 
 Covers `src/interface/` and `src/providers/memory/`. A conformance suite (`src/interface/__tests__/`) that every provider
 must pass checks:
