@@ -16,13 +16,15 @@
     "check:all": "bun run type-check && bun run test"
   },
   "dependencies": {
+    "@ag-ui/client": "1.0.2",
     "@ai-sdk/openai-compatible": "1.0.63",
-    "@copilotkit/react-core": "1.87.0",
-    "@copilotkit/runtime": "1.87.0",
+    "@copilotkit/react-core": "1.88.0",
+    "@copilotkit/runtime": "1.88.0",
     "nostr-tools": "2.26.1",
     "pg": "^8.19.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "rxjs": "7.8.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {

@@ -49,6 +49,29 @@ export interface AssistantConfig {
   skillsDir: string | null;
   /** Requests per minute: by signed-in person, and by address when there is no session. 0 = off. */
   rateLimits: { perUser: number; perAddress: number; modelPerUser: number };
+  /**
+   * The Buzz relay that keeps threads, finished runs and memory (intelligence.md). Null when it is
+   * not configured, and the assistant keeps them in memory instead. All four are required together:
+   * a partial set is refused rather than read as "not configured".
+   */
+  buzz: { relayUrl: string; operatorSecret: string; botSecret: string; keyEncryptionKey: string } | null;
+}
+
+function buzzSettings(env: Record<string, string | undefined>): AssistantConfig["buzz"] {
+  const names = ["BUZZ_RELAY_URL", "BUZZ_OPERATOR_SECRET", "BUZZ_BOT_SECRET", "KEY_ENCRYPTION_KEY"] as const;
+  const values = names.map((name) => env[name]?.trim() || "");
+  if (values.every((value) => value === "")) return null;
+  const missing = names.filter((_, index) => values[index] === "");
+  if (missing.length > 0) throw new Error(`Buzz is partly configured: ${missing.join(", ")} missing`);
+  for (const name of ["BUZZ_OPERATOR_SECRET", "BUZZ_BOT_SECRET"] as const) {
+    if (!/^[0-9a-f]{64}$/.test(env[name]!.trim())) throw new Error(`${name} must be 64 lowercase hex characters`);
+  }
+  return {
+    relayUrl: trimSlash(values[0]!),
+    operatorSecret: values[1]!,
+    botSecret: values[2]!,
+    keyEncryptionKey: values[3]!,
+  };
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): AssistantConfig {
@@ -76,5 +99,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       perAddress: Number(env.CHAT_RATE_PER_ADDRESS ?? 60),
       modelPerUser: Number(env.CHAT_RATE_MODEL_PER_USER ?? 20),
     },
+    buzz: buzzSettings(env),
   };
 }

@@ -26,7 +26,9 @@ import {
   createCopilotRuntimeHandler,
 } from "@copilotkit/runtime/v2";
 import { ActionStore, execute } from "./actions";
-import { DurableAgentRunner, MemoryThreadStore, type ThreadStore } from "./durable";
+import type { Intelligence } from "../interface/types";
+import { createMemoryIntelligence } from "../providers/memory";
+import { IntelligenceRunner } from "../runtime/intelligence-runner";
 import type { AuditLog } from "./audit";
 import type { AssistantConfig } from "./config";
 import {
@@ -57,8 +59,10 @@ export interface AssistantDeps {
   switches?: SwitchStore;
   /** Serves the built client; absent in tests. */
   serveClient?: (request: Request, path: string) => Promise<Response> | Response;
-  /** Where conversations are saved so they survive a restart; in memory when absent. */
-  threads?: ThreadStore;
+  /** Where threads, finished runs and memory live (the Intelligence interface); in memory when absent. */
+  intelligence?: Intelligence;
+  /** The runner, when a test needs to wait for runs to be recorded; built from `intelligence` when absent. */
+  runner?: IntelligenceRunner;
   /** Proposed changes awaiting confirmation; the tests share one to propose from outside. */
   actions?: ActionStore;
   /** Replaces the language model; the tests pass a scripted one. */
@@ -178,7 +182,8 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
       apiKey: config.ai.apiKey,
     }).chatModel(config.ai.model);
 
-  const runner = new DurableAgentRunner(deps.threads ?? new MemoryThreadStore());
+  const intelligence = deps.intelligence ?? createMemoryIntelligence();
+  const runner = deps.runner ?? new IntelligenceRunner(intelligence);
   const runtime = new CopilotRuntime({
     // Built per request, so the tools close over this person's own session.
     agents: async ({ request }) => {
@@ -197,9 +202,7 @@ export function createAssistant(deps: AssistantDeps): (request: Request) => Prom
     identifyUser: async (request) => {
       const caller = await identify(request);
       if (!caller) throw new Error("Not signed in");
-      // Saved conversations come back before the runtime asks whose they are.
-      await runner.restore(caller.person.email).catch(() => undefined);
-      return { id: caller.person.email, name: caller.person.name };
+      return { id: caller.person.email.toLowerCase(), name: caller.person.name };
     },
     runner,
   });

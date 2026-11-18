@@ -63,7 +63,6 @@ open-source runtime, with its built-in agent pointed at the local OpenAI-compati
 | `src/server/ratelimit.ts` | Rate limits |
 | `src/server/switches.ts` | The administrator's switches |
 | `src/server/skills.ts` | The application's skills |
-| `src/server/durable.ts` | Saved conversations |
 | `src/server/database.ts` | `chatdb`, which the service creates itself |
 | `src/client/` | Sign-in, chat, and the framed workspace |
 
@@ -293,7 +292,7 @@ must pass checks:
 - Compose adds `buzz-relay` and `redis` under profile `chat`. `pg-init` adds `buzzdb`.
 - `start.sh --with-chat` writes `KEY_ENCRYPTION_KEY` and the operator and assistant keys once.
 
-### 10. The Intelligence runner (replaces `durable.ts`)
+### 10. The Intelligence runner (replaces `durable.ts`) — done
 
 `src/runtime/intelligence-runner.ts` implements CopilotKit's `AgentRunner` over the interface:
 - `run`, `connect`, `isRunning`, `stop`;
@@ -301,6 +300,12 @@ must pass checks:
 
 It uses no CopilotKit internals, so the runtime's own thread routes work without CopilotKit Intelligence. Delete
 `durable.ts`, the `restore()` call and `chat_threads`.
+
+**Done.** `durable.ts` and `chat_threads` are gone. `server.ts` puts the Buzz provider under the runner when the
+`BUZZ_*` settings and `KEY_ENCRYPTION_KEY` are present, and the in-memory provider otherwise. A partial set is refused.
+Runner tests cover: recording a run, surviving a restart for the owner only, refusing a run on someone else's thread,
+chaining turns by parent run, and reporting a run that could not be recorded. Removing the owner check fails the
+intrusion test. CopilotKit is at 1.88.0 here, matching OpenBot's client.
 
 ### 11. The OpenBot API subset (`src/openbot/`)
 

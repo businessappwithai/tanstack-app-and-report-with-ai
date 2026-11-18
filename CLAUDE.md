@@ -630,9 +630,15 @@ What to keep true when touching it:
   say nothing has happened; `POST /chat/api/actions/<id>/confirm` (same origin, JSON, the person's own
   session, one use, five minutes) runs the application's call with the version the record was read at.
   The model cannot confirm. Do not add a tool that writes directly.
-- **Conversations and tickets are in `chatdb`** (`chat_threads`, `chat_tickets`). The CopilotKit runner is
-  wrapped, not replaced (`durable.ts`): its thread endpoints are synchronous. A stored thread's owner is
-  never rewritten, and restoring never replaces a thread the process already holds.
+- **Conversations, finished runs and memory live behind the Intelligence interface** (`src/interface/`):
+  on the Buzz relay (`src/providers/buzz/`, the `buzz-relay` service) when `BUZZ_*` and
+  `KEY_ENCRYPTION_KEY` are set, in memory otherwise. `src/runtime/intelligence-runner.ts` is the
+  CopilotKit `AgentRunner` over it, with no CopilotKit internals; a run in progress stays in its process.
+  A thread belongs to whoever ran it first, and every relay read is made with the reader's own key, so the
+  relay's channel membership is what keeps one person out of another's threads. Each person's relay key
+  is sealed in `chatdb` (`ob_keys`) under `KEY_ENCRYPTION_KEY`; tickets stay in `chat_tickets`. Never
+  regenerate `KEY_ENCRYPTION_KEY`, `BUZZ_OPERATOR_SECRET` or `BUZZ_BOT_SECRET`: each strands what was
+  made under it. Any change to a provider must pass `src/interface/conformance.ts`.
 - **Rate limits are per process** (`CHAT_RATE_PER_USER`, `CHAT_RATE_PER_ADDRESS`, `CHAT_RATE_MODEL_PER_USER`;
   0 turns one off). With replicas each keeps its own counter, which loosens the limit and never tightens it.
 - **It reads the generated application's skills** (`assistant-skills/`, written by the generator
