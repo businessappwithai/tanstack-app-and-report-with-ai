@@ -187,11 +187,10 @@ browser ── /chat/*  ──────────────────�
 | `src/providers/buzz/` | The interface on a Buzz relay: keys, NIP-98/NIP-42, channels, events, memory |
 | `src/runtime/` | `IntelligenceRunner`, CopilotKit's `AgentRunner` over the interface. It replaces `durable.ts` |
 | `src/openbot/` | The OpenBot API subset, and serving the built app |
-| `src/gateway/` | Intelligence's wire protocol (REST and Phoenix) over the interface, built only if phase 0 shows OpenBot's client needs it |
 | `src/server/` | The existing server: identity, tools, tickets, proposals, switches, audit |
 | `docker/buzz-relay.Dockerfile` | Builds the relay from the pinned Buzz checkout with cargo |
 | `docker/openbot-app.Dockerfile` | Builds OpenBot's app from the pinned checkout with Bun 1.4.4 |
-| `docs/` | Phase-0 findings |
+| `docs/` | Phase-7 findings (`docs/phase-7-findings.md`) |
 
 ### The Intelligence interface (`src/interface/`)
 
@@ -245,7 +244,7 @@ thread or memory.
 | The operator | A relay key with role `Owner`. It creates channels and manages members |
 | A thread | A private Stream channel whose members are the person and the assistant. Name and archived state are channel metadata |
 | Messages | Stream messages signed by the person or the assistant, so they read naturally in the Buzz desktop app |
-| Run events | A Buzz-range custom kind (`44100`, an AG-UI event batch) in the same channel. Each event carries an id and a sequence number, and readers drop duplicates |
+| Run events | NIP-AR artifacts (kind `45010`, `type: appwithai.agui-batch`, `run` and `seq` tags), one per batch, in the same channel. The relay rejects kinds it does not know, so no new kind is invented. Each event carries an id and a sequence number, and readers drop duplicates |
 | Run lock, active run, stop | In process for one replica. A Redis lock with a TTL is needed for several replicas |
 | Memory | Buzz's own convention: kind 30174, NIP-44 between the assistant's key and the person's, a slug `d` tag, tombstone delete. `kind`, `scope` and `sourceThreadIds` are in the encrypted body. For project scope, `p` is the assistant's key |
 | Recall | The provider decrypts and ranks, by keyword plus vector similarity where an embeddings endpoint is configured |
@@ -283,6 +282,10 @@ OpenBot:
 
 The output is `docs/phase-7-findings.md`, plus updates to this file.
 
+**Done.** The relay runs on PostgreSQL and Redis with `BUZZ_GIT_CONFORMANCE_PROBE=false` (no S3), and the whole Buzz
+mapping was proven against it. OpenBot's app built on Bun 1.4.4 and chatted against a CopilotKit 1.88.0 runtime with
+no Intelligence. The roughly 35 operations its core paths call are listed in the findings.
+
 ### 8. The interface and the in-memory provider
 
 Covers `src/interface/` and `src/providers/memory/`. A conformance suite (`src/interface/__tests__/`) that every provider
@@ -297,7 +300,9 @@ must pass checks:
 ### 9. The Buzz provider, and Buzz in the stack
 
 - `src/providers/buzz/` passes the same suite against a real relay.
-- `docker/buzz-relay.Dockerfile`.
+- `docker/buzz-relay.Dockerfile`: cargo build of `buzz-relay`. It runs with `BUZZ_RELAY_PRIVATE_KEY`,
+  `RELAY_OWNER_PUBKEY`, `BUZZ_AUTO_MIGRATE=true`, `BUZZ_GIT_CONFORMANCE_PROBE=false` and
+  `BUZZ_REQUIRE_RELAY_MEMBERSHIP=true`. No MinIO is needed.
 - `deps.json` pins `buzz` and `openbot`, as gitignored Docker build contexts.
 - Compose adds `buzz-relay` and `redis` under profile `chat`. `pg-init` adds `buzzdb`.
 - `start.sh --with-chat` writes `KEY_ENCRYPTION_KEY` and the operator and assistant keys once.
@@ -313,7 +318,10 @@ It uses no CopilotKit internals, so the runtime's own thread routes work without
 
 ### 11. The OpenBot API subset (`src/openbot/`)
 
-The subset is whatever phase 7 recorded.
+The subset is the one phase 7 recorded (`docs/phase-7-findings.md`). It includes OpenBot's `conversation-events`
+WebSocket for live sidebar updates. `getDeployment` answers team edition, with chat, memory and the thread list on and
+everything else off. The person is a `member`, with `onboarding: null`. CopilotKit moves to 1.88.0 here, to match the
+client.
 - **Shapes** follow `api/openapi.yaml` at the pinned commit.
 - **Errors** are problem+json; writes honour `Idempotency-Key`.
 - **Sign-in** passes through to the application, as today.
@@ -326,13 +334,10 @@ The subset is whatever phase 7 recorded.
 Everything else answers 501 `NOT_AVAILABLE_IN_THIS_DEPLOYMENT`, and capabilities say so. A contract test validates every
 response we send against the spec, and checks that every other route answers 501.
 
-### 12. The Intelligence wire protocol (`src/gateway/`), only if phase 7 requires it
+### 12. Dropped: the Intelligence wire protocol
 
-- REST: threads, lock, messages, connect, memories, entitlements.
-- Phoenix `/client` (vsn 2.0.0): `thread:<id>` and `user_meta:<code>`.
-- Single-use join tokens.
-
-All of it is over the same interface.
+Phase 7 showed that OpenBot's client chats over CopilotKit's local mode, so no Intelligence gateway is built. See
+`docs/phase-7-findings.md`.
 
 ### 13. Our features in OpenBot's UI
 
@@ -412,7 +417,6 @@ A security review of key custody, the delegate endpoint, the ticket service and 
 - **Reporting becomes per-person** when reached through chat. The per-role demo accounts remain for direct sign-in.
 - **OpenBot's API is large** (422 operations) and moves. The subset and its 501s are tied to a pin and re-checked
   whenever the pin moves.
-- **Intelligence mode:** if OpenBot's client needs it, phase 12 is required.
 - **Buzz calls itself unfinished.** Its rate limiting is a stub and approval gates are not wired; only its core is used
   (events, channels, membership, search, audit).
 - **Custodial keys** put every person's Nostr identity in `chatdb`, encrypted. Losing `KEY_ENCRYPTION_KEY` loses them,
