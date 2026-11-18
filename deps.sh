@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Place the two product repositories this one orchestrates, at the commits
-# deps.json pins.
+# Place every repository deps.json pins, at its commit: the two products, and Buzz and
+# OpenBot, which intelligence/ builds from.
 #
-#   ./deps.sh              clone or update both to their pinned refs
+#   ./deps.sh              clone or update each to its pinned ref
 #   ./deps.sh --install    also `bun install --frozen-lockfile` in each
 #   ./deps.sh --status     say what is checked out, and whether it matches
 #   ./deps.sh --update     resolve each branch to its head and rewrite deps.json

@@ -19,6 +19,7 @@
     "@ai-sdk/openai-compatible": "1.0.63",
     "@copilotkit/react-core": "1.87.0",
     "@copilotkit/runtime": "1.87.0",
+    "nostr-tools": "2.26.1",
     "pg": "^8.19.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

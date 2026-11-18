@@ -230,7 +230,7 @@ thread or memory.
 | Search, audit | Buzz's own: full-text search, and the hash-chained audit log |
 
 Tool results stay inside private channels, and the relay checks membership on every read. Signing uses `nostr-tools`
-(MIT).
+(Unlicense, public domain).
 
 ## Phases
 
@@ -276,9 +276,16 @@ must pass checks:
 - stop;
 - memory create, supersede, forget and recall.
 
-### 9. The Buzz provider, and Buzz in the stack
+### 9. The Buzz provider, and Buzz in the stack — done
 
-- `src/providers/buzz/` passes the same suite against a real relay.
+- `src/providers/buzz/` passes the same suite against a real relay, including one that requires membership, where it
+  admits each new person with kind 9030 (and without admitting, the relay refuses everything). It also passes NIP-AE's
+  own test vectors.
+- **Two defects the suite found and fixed.** First, a second create of a taken thread id added the second person to
+  the channel before failing. Creating the channel is now the claim, and members are added only after a fresh create.
+  Second, identical requests within a second were refused as NIP-98 replays. Every auth event now carries a nonce.
+- **Checkouts:** `deps.json` pins `buzz` and `openbot` under `intelligence/.checkouts/` (gitignored), so everything for
+  this stays in this directory.
 - `docker/buzz-relay.Dockerfile`: cargo build of `buzz-relay`. It runs with `BUZZ_RELAY_PRIVATE_KEY`,
   `RELAY_OWNER_PUBKEY`, `BUZZ_AUTO_MIGRATE=true`, `BUZZ_GIT_CONFORMANCE_PROBE=false` and
   `BUZZ_REQUIRE_RELAY_MEMBERSHIP=true`. No MinIO is needed.

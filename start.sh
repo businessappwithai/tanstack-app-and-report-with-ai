@@ -207,6 +207,13 @@ if [[ -n "$WITH_CHAT" ]] && ! grep -q '^CHAT_BRIDGE_SECRET=' "$ENV_FILE"; then
   echo "CHAT_BRIDGE_SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$ENV_FILE"
   echo "  wrote CHAT_BRIDGE_SECRET"
 fi
+# The Buzz relay's keys, the assistant's and the key that seals each person's
+# relay identity (intelligence/intelligence.md). Same rule: written once, never
+# replaced — a new one strands everything made under the old.
+if [[ -n "$WITH_CHAT" ]]; then
+  (cd intelligence && bun install --frozen-lockfile --ignore-scripts >/dev/null)
+  bun intelligence/scripts/chat-keys.ts "$ENV_FILE"
+fi
 {
   echo "# --- derived from this run; rewritten on every ./start.sh"
   echo "APP_NAME=${APP_NAME}"

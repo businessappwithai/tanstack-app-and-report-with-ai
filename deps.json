@@ -46,6 +46,32 @@
         "docker-compose.yml builds the `report` and `seeder` services from this checkout as their build context, with common/ passed as an additional context",
         "scripts/seed-reporting-pack.ts in that repository is the seeder both this orchestrator and a generated application's own compose file run — it uses that project's real getDb, encrypt and introspectAndCacheSchema rather than a second implementation of any of them"
       ]
+    },
+    {
+      "name": "buzz",
+      "repository": "block/buzz",
+      "path": "intelligence/.checkouts/buzz",
+      "branch": "main",
+      "ref": "b769d5bee81e99b8ff9189686bf6ab1856897c31",
+      "install": false,
+      "install_note": "A Docker build context only: intelligence/docker/buzz-relay.Dockerfile builds buzz-relay from it with cargo, so `./deps.sh --install` skips it.",
+      "needed_for": [
+        "the chat profile's `buzz-relay` service: the relay the Intelligence interface's Buzz provider keeps threads, run history and memory on (intelligence/intelligence.md)",
+        "only the relay crate is built (Rust, as the checkout's rust-toolchain.toml pins); its web, desktop and mobile clients and their pnpm tooling are not used"
+      ]
+    },
+    {
+      "name": "openbot",
+      "repository": "CopilotKit/OpenBot",
+      "path": "intelligence/.checkouts/openbot",
+      "branch": "main",
+      "ref": "3d8a716a73755f23fee64e0bba586cca87cf89c9",
+      "install": false,
+      "install_note": "A Docker build context only: the assistant image builds OpenBot's MIT web app from it with Bun 1.4.4, so `./deps.sh --install` skips it.",
+      "needed_for": [
+        "the web client the assistant serves at /chat: OpenBot's MIT app (app/, shared/), built for the /chat base path; its server is closed and is not used — intelligence/src/openbot/ answers the part of its API the app calls",
+        "api/openapi.yaml at this commit is the contract the OpenBot routes are held to"
+      ]
     }
   ]
 }

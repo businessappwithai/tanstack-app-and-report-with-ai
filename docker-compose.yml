@@ -298,12 +298,59 @@ services:
       # The generated application's skills (how each record type is named, its form,
       # its buttons, its reports), written by the generator beside its manual.
       CHAT_SKILLS_DIR: /skills
+      # Threads, run history and memory, on the Buzz relay below through the
+      # Intelligence interface (intelligence/intelligence.md). The relay is
+      # addressed by the host its RELAY_URL names, which is how it binds a request
+      # to its community. Without these the assistant keeps them in memory.
+      BUZZ_RELAY_URL: http://buzz-relay:3000
+      BUZZ_OPERATOR_SECRET: ${BUZZ_OPERATOR_SECRET:-}
+      BUZZ_BOT_SECRET: ${BUZZ_BOT_SECRET:-}
+      KEY_ENCRYPTION_KEY: ${KEY_ENCRYPTION_KEY:-}
     volumes:
       - ./common/.runtime/app/assistant-skills:/skills:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     expose:
       - "4200"
+
+  # ── Buzz: where the assistant keeps threads, run history and memory ────────
+  # The relay from the pinned checkout (deps.json `buzz`), built by our own
+  # Dockerfile with cargo. Membership is required: only the keys the assistant
+  # admits (the operator, the assistant, and one custodial key per person) can
+  # read or write, and every read is made with the reader's own key, so the
+  # relay's channel membership is what keeps one person out of another's threads.
+  # Its database sits on the reporting platform's server, beside chatdb, and the
+  # entrypoint creates it on a volume that predates it. No S3: the git
+  # conformance probe is off, and neither git hosting nor media is used.
+  buzz-relay:
+    profiles: ["chat"]
+    build:
+      context: ./intelligence/docker
+      dockerfile: buzz-relay.Dockerfile
+      additional_contexts:
+        buzz: ./intelligence/.checkouts/buzz
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${REPORT_DB_USER:-app}:${REPORT_DB_PASSWORD:-app}@${REPORT_DB_HOST:-postgres}:5432/buzzdb
+      REDIS_URL: redis://buzz-redis:6379
+      BUZZ_BIND_ADDR: 0.0.0.0:3000
+      RELAY_URL: ws://buzz-relay:3000
+      RELAY_OWNER_PUBKEY: ${RELAY_OWNER_PUBKEY:-}
+      BUZZ_RELAY_PRIVATE_KEY: ${BUZZ_RELAY_PRIVATE_KEY:-}
+      BUZZ_AUTO_MIGRATE: "true"
+      BUZZ_REQUIRE_RELAY_MEMBERSHIP: "true"
+      BUZZ_GIT_CONFORMANCE_PROBE: "false"
+      RUST_LOG: warn
+    expose:
+      - "3000"
+
+  buzz-redis:
+    profiles: ["chat"]
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    expose:
+      - "6379"
 
   # ── The front door ────────────────────────────────────────────────────────
   nginx:
